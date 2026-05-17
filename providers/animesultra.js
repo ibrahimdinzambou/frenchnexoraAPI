@@ -1,6 +1,6 @@
 /**
  * animesultra - Built from src/animesultra/
- * Generated: 2026-05-17T18:02:57.655Z
+ * Generated: 2026-05-17T18:16:31.438Z
  */
 var __provider = (() => {
   var __create = Object.create;
@@ -12882,6 +12882,38 @@ var __provider = (() => {
           }
         });
       };
+      const fetchEpisodeServers = (epHref, $context, lang) => __async(null, null, function* () {
+        const epRes = yield safeFetch(epHref, { headers: { "User-Agent": "Mozilla/5.0" } });
+        if (!epRes || !epRes.ok) {
+          console.log(`[AnimesUltra] Episode page not OK (${epRes == null ? void 0 : epRes.status}) for ${epHref}`);
+          return [];
+        }
+        const epHtml = yield epRes.text();
+        const $ep = import_cheerio_without_node_native.default.load(epHtml);
+        if ($ep(".server-item").length === 0) {
+          console.log(`[AnimesUltra] No server items on ${epHref}`);
+          return [];
+        }
+        const servers = [];
+        $ep(".server-item").each((i, el) => {
+          const sId = $ep(el).attr("data-server-id");
+          const embed = $ep(el).attr("data-embed");
+          const sname = $ep(el).text().trim() || `Srv_${sId}`;
+          let url = null;
+          if (embed && (embed.startsWith("http") || /^[0-9]+$/.test(embed))) url = embed;
+          if (sId) {
+            const box = $context(`#content_player_${sId}`);
+            if (box.length > 0) {
+              const textUrl = box.text().trim();
+              const iframeUrl = box.find("iframe").attr("src");
+              const altUrl = textUrl || iframeUrl;
+              if (altUrl && (altUrl.startsWith("http") || /^[0-9]+$/.test(altUrl))) url = altUrl;
+            }
+          }
+          if (url) servers.push({ url, lang, sname });
+        });
+        return servers;
+      });
       for (const match of matches) {
         if (!match.url) continue;
         if (processedCount >= 6) break;
@@ -12922,30 +12954,10 @@ var __provider = (() => {
           }
           processedCount++;
           for (const epHref of epHrefs) {
-            const epRes = yield safeFetch(epHref, { headers: { "User-Agent": "Mozilla/5.0" } });
-            const epHtml = epRes ? yield epRes.text() : "";
-            const $ep = import_cheerio_without_node_native.default.load(epHtml);
-            $ep(".server-item").each((i, el) => {
-              const sId = $ep(el).attr("data-server-id");
-              const embed = $ep(el).attr("data-embed");
-              const sname = $ep(el).text().trim() || `Srv_${sId}`;
-              let url = null;
-              if (embed && (embed.startsWith("http") || /^[0-9]+$/.test(embed))) {
-                url = embed;
-              }
-              if (sId) {
-                const box = $(`#content_player_${sId}`);
-                if (box.length > 0) {
-                  const textUrl = box.text().trim();
-                  const iframeUrl = box.find("iframe").attr("src");
-                  const altUrl = textUrl || iframeUrl;
-                  if (altUrl && (altUrl.startsWith("http") || /^[0-9]+$/.test(altUrl))) {
-                    url = altUrl;
-                  }
-                }
-              }
-              if (url) pushStream(url, lang, sname);
-            });
+            const servers = yield fetchEpisodeServers(epHref, $, lang);
+            for (const { url, sname } of servers) {
+              pushStream(url, lang, sname);
+            }
           }
         } catch (e) {
           console.error(`[AnimesUltra] Extract error: ${e.message}`);
@@ -12987,33 +12999,12 @@ var __provider = (() => {
           });
           if (epHrefs.length > 0) {
             let lang = "VOSTFR";
-            const match = sp.match;
-            if (detectLang(match.title) === "vf") lang = "VF";
+            if (detectLang(sp.match.title) === "vf") lang = "VF";
             for (const epHref of epHrefs) {
-              const epRes = yield safeFetch(epHref, { headers: { "User-Agent": "Mozilla/5.0" } });
-              const epHtml = epRes ? yield epRes.text() : "";
-              const $ep = import_cheerio_without_node_native.default.load(epHtml);
-              $ep(".server-item").each((i, el) => {
-                const sId = $ep(el).attr("data-server-id");
-                const embed = $ep(el).attr("data-embed");
-                const sname = $ep(el).text().trim() || `Srv_${sId}`;
-                let url = null;
-                if (embed && (embed.startsWith("http") || /^[0-9]+$/.test(embed))) {
-                  url = embed;
-                }
-                if (sId) {
-                  const box = $c(`#content_player_${sId}`);
-                  if (box.length > 0) {
-                    const textUrl = box.text().trim();
-                    const iframeUrl = box.find("iframe").attr("src");
-                    const altUrl = textUrl || iframeUrl;
-                    if (altUrl && (altUrl.startsWith("http") || /^[0-9]+$/.test(altUrl))) {
-                      url = altUrl;
-                    }
-                  }
-                }
-                if (url) pushStream(url, lang, sname);
-              });
+              const servers = yield fetchEpisodeServers(epHref, $c, lang);
+              for (const { url, sname } of servers) {
+                pushStream(url, lang, sname);
+              }
             }
             break;
           }
