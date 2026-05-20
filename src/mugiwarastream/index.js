@@ -1,15 +1,28 @@
 import { extractStreams } from './extractor.js';
-import { expandStreamQualities } from '../utils/resolvers.js';
+import { expandStreamQualities, withTimeout } from '../utils/resolvers.js';
+
+const PROVIDER_TIMEOUT = parseInt(process.env.NUVIO_TIMEOUT_MUGIWARA, 10) || 60000;
 
 async function getStreams(tmdbId, mediaType, season, episode) {
     const se = mediaType === 'movie' ? '' : ` S${season}E${episode}`;
-    console.log(`[Mugiwara] Request: ${mediaType} ${tmdbId}${se}`);
+    const label = `Mugiwara ${mediaType} ${tmdbId}${se}`;
+    console.log(`[Mugiwara] Request: ${label}`);
 
     try {
-        const streams = await extractStreams(tmdbId, mediaType, season, episode);
-        return await expandStreamQualities(streams);
+        const streams = await withTimeout(
+            extractStreams(tmdbId, mediaType, season, episode),
+            PROVIDER_TIMEOUT,
+            label
+        );
+        return await expandStreamQualities(streams, {
+            includeCodec: true,
+        });
     } catch (error) {
-        console.error(`[Mugiwara] Extraction error for ${tmdbId}:`, error);
+        if (error.message?.includes('[Timeout]')) {
+            console.warn(`[Mugiwara] ${error.message}`);
+        } else {
+            console.error(`[Mugiwara] Extraction error for ${tmdbId}:`, error);
+        }
         return [];
     }
 }

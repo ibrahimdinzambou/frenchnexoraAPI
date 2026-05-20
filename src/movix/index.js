@@ -1,18 +1,26 @@
-/**
- * Movix Provider
- * Main entry point for Nuvio.
- */
-
 import { extractStreams } from './extractor.js';
+import { withTimeout } from '../utils/resolvers.js';
+
+const PROVIDER_TIMEOUT = parseInt(process.env.NUVIO_TIMEOUT_MOVIX, 10) || 30000;
 
 async function getStreams(tmdbId, mediaType, season, episode) {
+    const label = `Movix ${mediaType} ${tmdbId} S${season}E${episode}`;
+    console.log(`[Movix] Request: ${label}`);
+
     try {
-        console.log(`[Movix] Request: ${mediaType} ${tmdbId} S${season}E${episode}`);
-        const streams = await extractStreams(tmdbId, mediaType, season, episode);
+        const streams = await withTimeout(
+            extractStreams(tmdbId, mediaType, season, episode),
+            PROVIDER_TIMEOUT,
+            label
+        );
         console.log(`[Movix] Found ${streams.length} streams`);
         return streams;
     } catch (error) {
-        console.error(`[Movix] Error: ${error.message}`);
+        if (error.message?.includes('[Timeout]')) {
+            console.warn(`[Movix] ${error.message}`);
+        } else {
+            console.error(`[Movix] Error: ${error.message}`);
+        }
         return [];
     }
 }

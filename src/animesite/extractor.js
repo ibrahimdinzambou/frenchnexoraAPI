@@ -227,7 +227,7 @@ async function getTitlesCached(tmdbId, mediaType) {
     const key = `${tmdbId}_${mediaType}`;
     if (tmdbTitleCache.has(key)) return tmdbTitleCache.get(key);
 
-    const titles = await getTmdbTitles(tmdbId, mediaType);
+    const titles = await getTmdbTitles(tmdbId, mediaType, { season });
 
     const filtered = titles.filter(t => {
         if (!t) return false;

@@ -1,6 +1,7 @@
 import cheerio from 'cheerio-without-node-native';
 import { safeFetch, resolveStream } from '../utils/resolvers.js';
 import { getTmdbTitles } from '../utils/metadata.js';
+import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
 import { fetchText, fetchJson, BASE_URL, BASE_URLS } from './http.js';
 
 const MIN_MATCH_SCORE = 60;
@@ -473,13 +474,28 @@ async function searchMovieOnSite(tmdbId, titles, subType) {
 /* ---------- MAIN EXPORT ---------- */
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
-    const titles = await getTmdbTitles(tmdbId, mediaType);
+    const titles = await getTmdbTitles(tmdbId, mediaType, { season });
     if (!titles || titles.length === 0) return [];
 
     const subType = await detectSubType(tmdbId, mediaType, titles);
     if (subType) console.log('[Frenchstream] subType: ' + subType);
 
     if (mediaType === 'tv') {
+        // --- ARMSYNC Metadata Resolution ---
+        let targetEpisodes = [episode];
+        try {
+            const imdbId = await getImdbId(tmdbId, mediaType);
+            if (imdbId) {
+                const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, episode);
+                if (absoluteEpisode && absoluteEpisode !== episode) {
+                    targetEpisodes.push(absoluteEpisode);
+                }
+            }
+        } catch (e) {
+            console.warn(`[Frenchstream] ArmSync failed: ${e.message}`);
+        }
+        // ------------------------------------
+
         const seasons = await fetchSeasons(tmdbId);
         if (seasons.length > 0) {
             const sn = Number(season) || 1;
@@ -487,11 +503,13 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
             const target = sIdx !== -1 ? seasons[sIdx] : seasons[0];
             if (target) {
                 const epData = await fetchEpisodeData(target.id);
-                const candidates = collectTvSiteCandidates(epData, episode, subType);
-                if (candidates.length > 0) {
-                    const streams = await resolveCandidates(candidates);
-                    console.log('[Frenchstream] Site eps ' + target.id + ': ' + candidates.length + ' candidates, ' + streams.length + ' streams');
-                    return streams;
+                for (const ep of targetEpisodes) {
+                    const candidates = collectTvSiteCandidates(epData, ep, subType);
+                    if (candidates.length > 0) {
+                        const streams = await resolveCandidates(candidates);
+                        console.log('[Frenchstream] Site eps ' + target.id + ': ' + candidates.length + ' candidates, ' + streams.length + ' streams (ep=' + ep + ')');
+                        return streams;
+                    }
                 }
             }
         }

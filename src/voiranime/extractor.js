@@ -270,7 +270,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 }
 
 async function _extractStreams(tmdbId, mediaType, season, episode) {
-  const titles = await getTmdbTitles(tmdbId, mediaType);
+  const titles = await getTmdbTitles(tmdbId, mediaType, { season });
   if (titles.length === 0) return [];
 
   // --- ARMSYNC Metadata Resolution ---
@@ -338,18 +338,19 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
         ? "VF"
         : "VOSTFR";
 
-    // Optimization: if the result is explicitly for a different season,
-    // skip it unless targetEpisodes contains an absolute episode
-    const seasonMatch = matchLower.match(/saison\s*(\d+)/);
-    if (
-      seasonMatch &&
-      parseInt(seasonMatch[1]) !== season &&
-      targetEpisodes.length === 1
-    ) {
-      continue;
-    }
+  // Optimization: if the result is explicitly for a different season,
+  // skip it unless targetEpisodes contains an absolute episode,
+  // OR if this is the last match to try (fallback mismatch allowed)
+  const seasonMatch = matchLower.match(/saison\s*(\d+)/);
+  if (
+    seasonMatch &&
+    parseInt(seasonMatch[1]) !== season &&
+    targetEpisodes.length === 1
+  ) {
+    continue;
+  }
 
-    try {
+  try {
       const html = await fetchWithRetry(animeUrl, { timeout: PAGE_TIMEOUT });
       const $ = cheerio.load(html);
 
@@ -489,6 +490,103 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
         }
       }
     } catch (e) {}
+  }
+
+  // --- FALLBACK: if no direct streams found, retry with season-specific search ---
+  if (streams.filter(s => s && s.isDirect).length === 0 && matches.length > 0) {
+    console.log(`[VoirAnime] No direct streams from initial matches, retrying with season-aware fallback`);
+    const seasonStr = season ? String(season) : '';
+    for (const match of matches) {
+      if (checkedUrls.has(match.url)) continue;
+      checkedUrls.add(match.url);
+
+      const matchLower = match.title.toLowerCase();
+      const matchHasSeason = matchLower.includes(`saison ${seasonStr}`);
+      const urlHasSeason = match.url.includes(`-${seasonStr}-`) || match.url.includes(`-saison-${seasonStr}`);
+      if (!matchHasSeason && !urlHasSeason) continue;
+
+      const lang = match.title.toUpperCase().includes("VF") || match.url.includes("-vf") ? "VF" : "VOSTFR";
+
+      try {
+        const html = await fetchWithRetry(match.url, { timeout: PAGE_TIMEOUT });
+        const $ = cheerio.load(html);
+        const allLinks = [];
+        $('.listing-chapters a, .list-chapter a, .wp-manga-chapter a, .episodes a, ul.episodes li a').each((i, el) => {
+          const h = $(el).attr('href');
+          if (h) allLinks.push(h);
+        });
+        if (allLinks.length === 0) continue;
+
+        allLinks.reverse();
+        for (const ep of targetEpisodes) {
+          const idx = ep - 1;
+          if (idx >= 0 && idx < allLinks.length) {
+            const episodeUrl = allLinks[idx];
+            if (checkedEpisodeUrls.has(episodeUrl)) continue;
+            checkedEpisodeUrls.add(episodeUrl);
+
+            const epRawHtml = await fetchWithRetry(episodeUrl, { timeout: PAGE_TIMEOUT });
+            const ep$ = cheerio.load(epRawHtml);
+            const hosts = [];
+            ep$('[name="host"] option, .host-select option').each((i, el) => {
+              const val = ep$(el).val();
+              if (val && val !== "Choisir un lecteur") hosts.push(val);
+            });
+            const filteredHosts = hosts.filter(h => !/YU|YourUpload|MOON\b|Lecteur\s+SB/i.test(h));
+
+            if (filteredHosts.length === 0) {
+              let iframe = null;
+              ep$("iframe").each((_, el) => {
+                const src = ep$(el).attr("src") || "";
+                if (src.startsWith("http") && !src.includes("voiranime.com")) {
+                  iframe = src;
+                  return false;
+                }
+              });
+              if (iframe) {
+                const stream = await resolveStream({
+                  name: `VoirAnime (${lang})`,
+                  title: `Default Player - ${lang}`,
+                  quality: "HD",
+                  url: iframe,
+                  headers: { Referer: BASE_URL, Origin: BASE_URL, "User-Agent": "Mozilla/5.0" },
+                });
+                if (stream) streams.push(stream);
+              }
+            } else {
+              const streamHeaders = { Referer: BASE_URL, Origin: BASE_URL, "User-Agent": "Mozilla/5.0" };
+              const hostPromises = filteredHosts.map(async (host) => {
+                try {
+                  const hostUrl = `${episodeUrl}${episodeUrl.includes("?") ? "&" : "?"}host=${encodeURIComponent(host)}`;
+                  const hostHtml = await fetchText(hostUrl, { timeout: 20000 });
+                  const iframeMatch = hostHtml.match(/<iframe[^>]+src=["'](https?:\/\/[^"']+)["']/i);
+                  let embedUrl = iframeMatch ? iframeMatch[1] : null;
+                  if (!embedUrl) {
+                    const scriptMatch = hostHtml.match(/https?:\/\/[^"'\s<>]+\/(?:embed|e|v|player)\/[^"'\s<>]+/);
+                    if (scriptMatch && !scriptMatch[0].includes("voiranime.com")) embedUrl = scriptMatch[0];
+                  }
+                  if (embedUrl) {
+                    return resolveStream({
+                      name: `VoirAnime (${lang})`,
+                      title: `${host} - ${lang}`,
+                      url: embedUrl,
+                      quality: "HD",
+                      headers: { ...streamHeaders },
+                    });
+                  }
+                } catch (err) {}
+                return null;
+              });
+              const resolvedHosts = await Promise.all(hostPromises);
+              for (const s of resolvedHosts) {
+                if (s) streams.push(s);
+              }
+            }
+          }
+        }
+      } catch (e) {}
+      if (streams.filter(s => s && s.isDirect).length > 0) break;
+    }
   }
 
   const validStreams = streams.filter((s) => s && s.isDirect);

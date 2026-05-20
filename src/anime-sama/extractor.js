@@ -6,6 +6,7 @@ import { fetchText } from './http.js';
 import cheerio from 'cheerio-without-node-native';
 import { resolveStream } from '../utils/resolvers.js';
 import { getTmdbTitles } from '../utils/metadata.js';
+import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
 
 const BASE_URL = "https://anime-sama.to";
 const MAX_FALLBACK_TITLES = 3;
@@ -118,7 +119,9 @@ function buildStreams(parsed, lang, episode, idx) {
     return Promise.all(promises).then(r => r.filter(s => s != null));
 }
 
-async function fetchAndGetUrl(slug, lang, season, episode, mediaType) {
+async function fetchAndGetUrl(slug, lang, season, episode, mediaType, altEpisodes = []) {
+    const episodesToTry = [episode, ...altEpisodes.filter(e => e !== episode)];
+
     if (mediaType === 'movie') {
         const jsContent = await fetchJs(slug, 'film', lang);
         if (!jsContent) return [];
@@ -127,6 +130,14 @@ async function fetchAndGetUrl(slug, lang, season, episode, mediaType) {
         return buildStreams(parsed, lang, null, 0);
     }
 
+    for (const ep of episodesToTry) {
+        const result = await tryFetchEpisode(slug, lang, season, ep);
+        if (result.length > 0) return result;
+    }
+    return [];
+}
+
+async function tryFetchEpisode(slug, lang, season, episode) {
     // Try main season
     const mainJs = await fetchJs(slug, `saison${season}`, lang);
     if (mainJs) {
@@ -136,7 +147,6 @@ async function fetchAndGetUrl(slug, lang, season, episode, mediaType) {
             if (episode >= 1 && episode <= totalEps) {
                 return buildStreams(parsed, lang, episode, episode - 1);
             }
-            // Episode out of bounds → try sub-parts
             let cumulativeEps = totalEps;
             for (let i = 2; i <= 5; i++) {
                 const subJs = await fetchJs(slug, `saison${season}-${i}`, lang);
@@ -169,8 +179,25 @@ async function fetchAndGetUrl(slug, lang, season, episode, mediaType) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
-    const titles = await getTmdbTitles(tmdbId, mediaType);
+    const titles = await getTmdbTitles(tmdbId, mediaType, { season });
     if (titles.length === 0) return [];
+
+    // --- ARMSYNC Metadata Resolution ---
+    let altEpisodes = [];
+    if (mediaType === 'tv') {
+        try {
+            const imdbId = await getImdbId(tmdbId, mediaType);
+            if (imdbId) {
+                const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, episode);
+                if (absoluteEpisode && absoluteEpisode !== episode) {
+                    altEpisodes.push(absoluteEpisode);
+                }
+            }
+        } catch (e) {
+            console.warn(`[Anime-Sama] ArmSync failed: ${e.message}`);
+        }
+    }
+    // ------------------------------------
 
     const title = titles[0];
     const slug = toSlug(title);
@@ -180,11 +207,37 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     // Primary: try the generated slug for each language
     const primaryPromises = [];
     for (const lang of languages) {
-        primaryPromises.push(fetchAndGetUrl(slug, lang, season, episode, mediaType));
+        primaryPromises.push(fetchAndGetUrl(slug, lang, season, episode, mediaType, altEpisodes));
     }
     const primaryResults = await Promise.all(primaryPromises);
     for (const result of primaryResults) {
         streams.push(...result);
+    }
+
+    // If primary failed, try slug with season suffix (e.g., "overlord-saison-3")
+    if (streams.length === 0 && season > 1) {
+        const seasonSlug = `${slug}-saison-${season}`;
+        const seasonPromises = [];
+        for (const lang of languages) {
+            seasonPromises.push(fetchAndGetUrl(seasonSlug, lang, season, episode, mediaType, altEpisodes));
+        }
+        const seasonResults = await Promise.all(seasonPromises);
+        for (const result of seasonResults) {
+            streams.push(...result);
+        }
+    }
+
+    // If still empty, try season numeric slug (e.g., "overlord-3")
+    if (streams.length === 0 && season > 1) {
+        const numSlug = `${slug}-${season}`;
+        const numPromises = [];
+        for (const lang of languages) {
+            numPromises.push(fetchAndGetUrl(numSlug, lang, season, episode, mediaType, altEpisodes));
+        }
+        const numResults = await Promise.all(numPromises);
+        for (const result of numResults) {
+            streams.push(...result);
+        }
     }
 
     if (streams.length === 0) {
@@ -206,7 +259,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
             checkedSlugs.add(fSlug);
 
             for (const lang of languages) {
-                fallbackPromises.push(fetchAndGetUrl(fSlug, lang, season, episode, mediaType));
+                fallbackPromises.push(fetchAndGetUrl(fSlug, lang, season, episode, mediaType, altEpisodes));
             }
         }
 

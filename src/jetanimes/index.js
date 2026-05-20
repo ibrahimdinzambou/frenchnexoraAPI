@@ -1,13 +1,27 @@
 import { extractStreams } from './extractor.js';
-import { expandStreamQualities } from '../utils/resolvers.js';
+import { expandStreamQualities, withTimeout } from '../utils/resolvers.js';
+
+const PROVIDER_TIMEOUT = parseInt(process.env.NUVIO_TIMEOUT_JETANIMES, 10) || 60000;
 
 async function getStreams(tmdbId, mediaType, season, episode) {
+    const label = `JetAnimes ${mediaType} ${tmdbId} S${season}E${episode}`;
+    console.log(`[JetAnimes] Request: ${label}`);
+
     try {
-        console.log(`[JetAnimes] Request: ${mediaType} ${tmdbId} S${season}E${episode}`);
-        const streams = await extractStreams(tmdbId, mediaType, season, episode);
-        return await expandStreamQualities(streams);
+        const streams = await withTimeout(
+            extractStreams(tmdbId, mediaType, season, episode),
+            PROVIDER_TIMEOUT,
+            label
+        );
+        return await expandStreamQualities(streams, {
+            includeCodec: true,
+        });
     } catch (error) {
-        console.error(`[JetAnimes] Error: ${error.message}`);
+        if (error.message?.includes('[Timeout]')) {
+            console.warn(`[JetAnimes] ${error.message}`);
+        } else {
+            console.error(`[JetAnimes] Error: ${error.message}`);
+        }
         return [];
     }
 }

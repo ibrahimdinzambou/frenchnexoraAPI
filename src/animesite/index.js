@@ -1,14 +1,27 @@
 import { extractStreams } from './extractor.js';
-import { expandStreamQualities } from '../utils/resolvers.js';
+import { expandStreamQualities, withTimeout } from '../utils/resolvers.js';
+
+const PROVIDER_TIMEOUT = parseInt(process.env.NUVIO_TIMEOUT_ANIMESITE, 10) || 45000;
 
 async function getStreams(tmdbId, mediaType, season, episode) {
-    console.log(`[AnimeSite] Request: ${mediaType} ${tmdbId} S${season}E${episode}`);
+    const label = `AnimeSite ${mediaType} ${tmdbId} S${season}E${episode}`;
+    console.log(`[AnimeSite] Request: ${label}`);
 
     try {
-        const streams = await extractStreams(tmdbId, mediaType, season, episode);
-        return await expandStreamQualities(streams);
+        const streams = await withTimeout(
+            extractStreams(tmdbId, mediaType, season, episode),
+            PROVIDER_TIMEOUT,
+            label
+        );
+        return await expandStreamQualities(streams, {
+            includeCodec: true,
+        });
     } catch (error) {
-        console.error(`[AnimeSite] Error:`, error);
+        if (error.message?.includes('[Timeout]')) {
+            console.warn(`[AnimeSite] ${error.message}`);
+        } else {
+            console.error(`[AnimeSite] Error:`, error);
+        }
         return [];
     }
 }

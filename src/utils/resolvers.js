@@ -13,6 +13,26 @@ const _atob = (str) => {
     catch (e) { return str; }
 };
 
+const CODEC_PREFERENCE = ['AV1', 'H.265', 'H.264', 'VP9'];
+
+/**
+ * Wraps a promise with a hard timeout.
+ * If the timeout fires, the promise rejects.
+ */
+export async function withTimeout(promise, ms, label = 'Operation') {
+    if (!ms || ms <= 0) return promise;
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`[Timeout] ${label} exceeded ${ms}ms`)), ms);
+    });
+    try {
+        const result = await Promise.race([promise, timeout]);
+        return result;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 function isKnownFakeDirectUrl(url) {
     if (!url || typeof url !== 'string') return true;
     const u = url.toLowerCase();
@@ -67,6 +87,52 @@ function normalizeQualityLabel(value) {
     return `${DEFAULT_QUALITY_TIER}p`;
 }
 
+const CODEC_PRIORITY = {
+    'avc1': 'H.264',
+    'h264': 'H.264',
+    'hev1': 'H.265',
+    'hvc1': 'H.265',
+    'h265': 'H.265',
+    'av01': 'AV1',
+    'av1': 'AV1',
+    'vp9': 'VP9',
+    'vp09': 'VP9',
+    'mp4a': 'AAC',
+    'ac-3': 'AC3',
+    'ec-3': 'EAC3',
+    'opus': 'Opus',
+};
+
+function parseCodecs(codecsStr) {
+    if (!codecsStr || typeof codecsStr !== 'string') return { video: null, audio: null };
+    const parts = codecsStr.split(',').map(s => s.trim());
+    let video = null, audio = null;
+    for (const codec of parts) {
+        const base = codec.split('.')[0].toLowerCase();
+        const known = CODEC_PRIORITY[base];
+        if (!known) continue;
+        if (['H.264', 'H.265', 'AV1', 'VP9'].includes(known)) {
+            if (!video) video = { codec: known, raw: codec };
+        } else if (['AAC', 'AC3', 'EAC3', 'Opus'].includes(known)) {
+            if (!audio) audio = { codec: known, raw: codec };
+        }
+    }
+    return { video, audio };
+}
+
+const manifestCache = new Map();
+const MANIFEST_CACHE_TTL = 120_000;
+
+function getCachedManifest(key) {
+    const entry = manifestCache.get(key);
+    if (entry && Date.now() - entry.ts < MANIFEST_CACHE_TTL) return entry.data;
+    return null;
+}
+
+function setCachedManifest(key, data) {
+    manifestCache.set(key, { data, ts: Date.now() });
+}
+
 function qualityRank(value) {
     const q = normalizeQualityLabel(value).toLowerCase();
     const match = q.match(/(\d{3,4})p/);
@@ -75,20 +141,29 @@ function qualityRank(value) {
     return STRICT_QUALITY_TIERS.length - 1 - STRICT_QUALITY_TIERS.indexOf(tier);
 }
 
-function appendQualityToTitle(title, quality) {
+function appendQualityToTitle(title, quality, codec, fps) {
+    const parts = [];
     const q = normalizeQualityLabel(quality);
-    if (!q) return title;
-    if ((title || '').includes(q)) return title;
-    return `${title} [${q}]`;
+    if (q && !(title || '').includes(q)) parts.push(q);
+    if (codec && codec !== 'H.264') parts.push(codec);
+    if (fps && fps > 30) parts.push(`${fps}fps`);
+    if (parts.length === 0) return title;
+    return `${title} [${parts.join(' ')}]`;
 }
 
-async function expandSingleStreamQualities(stream) {
+async function expandSingleStreamQualities(stream, options = {}) {
     if (!stream || !stream.url || typeof stream.url !== 'string') return [];
     const url = stream.url;
     const lower = url.toLowerCase();
 
     if (!lower.includes('.m3u8') && !lower.includes('/hls/')) {
         return [{ ...stream, quality: normalizeQualityLabel(stream.quality || 'HD') }];
+    }
+
+    const cacheKey = url;
+    if (!options.forceRefresh) {
+        const cached = getCachedManifest(cacheKey);
+        if (cached) return cached;
     }
 
     const res = await safeFetch(url, { headers: stream.headers || {} });
@@ -114,17 +189,21 @@ async function expandSingleStreamQualities(stream) {
         const resolution = line.match(/RESOLUTION=\d+x(\d+)/i)?.[1];
         const frameRate = line.match(/FRAME-RATE=([0-9.]+)/i)?.[1];
         const bandwidth = line.match(/BANDWIDTH=(\d+)/i)?.[1];
+        const codecs = line.match(/CODECS="([^"]+)"/i)?.[1];
 
         let quality = resolution ? `${resolution}p` : null;
         if (!quality && bandwidth) {
             const bw = Number(bandwidth);
             if (bw >= 8_000_000) quality = '2160p';
-            else if (bw >= 4_000_000) quality = '1080p';
-            else if (bw >= 2_000_000) quality = '720p';
-            else if (bw >= 1_000_000) quality = '480p';
+            else if (bw >= 5_000_000) quality = '1080p';
+            else if (bw >= 2_500_000) quality = '720p';
+            else if (bw >= 1_200_000) quality = '480p';
             else quality = '360p';
         }
         if (!quality && frameRate) quality = `${normalizeQualityLabel(stream.quality || 'HD')}`;
+
+        const parsedCodec = parseCodecs(codecs);
+        const fps = frameRate ? Math.round(parseFloat(frameRate)) : null;
 
         let variantUrl = nextLine;
         try {
@@ -135,7 +214,16 @@ async function expandSingleStreamQualities(stream) {
             ...stream,
             url: variantUrl,
             quality: normalizeQualityLabel(quality || stream.quality || 'HD'),
-            title: appendQualityToTitle(stream.title || stream.name || 'Stream', quality || stream.quality || 'HD')
+            codec: parsedCodec.video?.codec || null,
+            audioCodec: parsedCodec.audio?.codec || null,
+            fps,
+            bandwidth: bandwidth ? parseInt(bandwidth) : null,
+            title: appendQualityToTitle(
+                stream.title || stream.name || 'Stream',
+                quality || stream.quality || 'HD',
+                options.includeCodec !== false ? parsedCodec.video?.codec : null,
+                options.includeFps !== false ? fps : null
+            )
         });
     }
 
@@ -152,16 +240,41 @@ async function expandSingleStreamQualities(stream) {
     }
 
     unique.sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality));
-    return unique;
+
+    const maxV = options.maxVariants || unique.length;
+    const trimmed = unique.slice(0, maxV);
+
+    setCachedManifest(cacheKey, trimmed);
+    return trimmed;
 }
 
-export async function expandStreamQualities(streams) {
+function filterByPreferredCodec(streams, preferred) {
+    if (!preferred || !streams.length) return streams;
+    const pref = preferred.toUpperCase();
+    const hasPreferred = streams.some(s => s.codec?.toUpperCase() === pref);
+    if (!hasPreferred) return streams;
+    return streams.filter(s => s.codec?.toUpperCase() === pref);
+}
+
+function sortStreams(streams) {
+    return [...streams].sort((a, b) => {
+        const qDiff = qualityRank(b.quality) - qualityRank(a.quality);
+        if (qDiff !== 0) return qDiff;
+        if (a.codec && b.codec) {
+            const getOrder = (c) => CODEC_PREFERENCE.indexOf(c) >= 0 ? CODEC_PREFERENCE.indexOf(c) : 99;
+            return getOrder(a.codec) - getOrder(b.codec);
+        }
+        return 0;
+    });
+}
+
+export async function expandStreamQualities(streams, options = {}) {
     const input = Array.isArray(streams) ? streams : [];
     const expanded = [];
 
     for (const stream of input) {
         try {
-            const variants = await expandSingleStreamQualities(stream);
+            const variants = await expandSingleStreamQualities(stream, options);
             for (const variant of variants) {
                 expanded.push(variant);
             }
@@ -180,8 +293,13 @@ export async function expandStreamQualities(streams) {
         deduped.push(stream);
     }
 
-    deduped.sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality));
-    return deduped;
+    const sorted = sortStreams(deduped);
+
+    if (options.preferredCodec) {
+        return filterByPreferredCodec(sorted, options.preferredCodec);
+    }
+
+    return sorted;
 }
 
 export async function safeFetch(url, options = {}) {
