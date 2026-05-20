@@ -108,7 +108,7 @@ function getPostId($) {
 export async function extractStreams(tmdbId, mediaType, season, episode) {
     console.log(`[JetAnimes] Request: ${mediaType} ${tmdbId} S${season}E${episode}`);
 
-    const titles = await getTmdbTitles(tmdbId, mediaType);
+    const titles = await getTmdbTitles(tmdbId, mediaType, { season });
     if (!titles || titles.length === 0) return [];
 
     const seen = new Set();

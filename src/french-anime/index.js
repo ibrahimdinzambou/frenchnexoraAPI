@@ -1,25 +1,27 @@
-/**
- * French-Anime Provider for Nuvio
- */
-
 import { extractStreams } from './extractor.js';
-import { expandStreamQualities } from '../utils/resolvers.js';
+import { expandStreamQualities, withTimeout } from '../utils/resolvers.js';
 
-/**
- * Main function to get streams for a specific media
- * @param {string} tmdbId - TMDb ID of the media
- * @param {string} mediaType - 'movie' or 'tv'
- * @param {number} season - Season number (null for movies)
- * @param {number} episode - Episode number (null for movies)
- */
+const PROVIDER_TIMEOUT = parseInt(process.env.NUVIO_TIMEOUT_FRENCH_ANIME, 10) || 60000;
+
 async function getStreams(tmdbId, mediaType, season, episode) {
-    console.log(`[French-Anime] Request: ${mediaType} ${tmdbId} S${season}E${episode}`);
+    const label = `French-Anime ${mediaType} ${tmdbId} S${season}E${episode}`;
+    console.log(`[French-Anime] Request: ${label}`);
 
     try {
-        const streams = await extractStreams(tmdbId, mediaType, season, episode);
-        return await expandStreamQualities(streams);
+        const streams = await withTimeout(
+            extractStreams(tmdbId, mediaType, season, episode),
+            PROVIDER_TIMEOUT,
+            label
+        );
+        return await expandStreamQualities(streams, {
+            includeCodec: true,
+        });
     } catch (error) {
-        console.error(`[French-Anime] Error:`, error);
+        if (error.message?.includes('[Timeout]')) {
+            console.warn(`[French-Anime] ${error.message}`);
+        } else {
+            console.error(`[French-Anime] Error:`, error);
+        }
         return [];
     }
 }

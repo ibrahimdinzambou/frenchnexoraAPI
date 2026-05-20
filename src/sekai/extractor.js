@@ -192,7 +192,7 @@ function extractArcsUrls(html, baseUrl) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episodeNum) {
-    const titles = await getTmdbTitles(tmdbId, mediaType);
+    const titles = await getTmdbTitles(tmdbId, mediaType, { season });
     if (!titles || titles.length === 0) return [];
     
     let absEp = mediaType === 'movie' ? 1 : episodeNum;

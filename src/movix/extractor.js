@@ -248,7 +248,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     let tmdbTitles = [];
 
     try {
-        tmdbTitles = await getTmdbTitles(tmdbId, mediaType);
+        tmdbTitles = await getTmdbTitles(tmdbId, mediaType, { season });
     } catch (e) {
         console.log(`[Movix] Failed to load TMDB titles for ${tmdbId}: ${e.message}`);
     }

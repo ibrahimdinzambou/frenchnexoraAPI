@@ -1,13 +1,28 @@
 import { extractStreams } from './extractor.js';
-import { expandStreamQualities } from '../utils/resolvers.js';
+import { expandStreamQualities, withTimeout } from '../utils/resolvers.js';
+
+const PROVIDER_TIMEOUT = parseInt(process.env.NUVIO_TIMEOUT_ANIMESULTRA, 10) || 60000;
 
 async function getStreams(tmdbId, mediaType, season, episode) {
+    const label = `AnimesUltra ${mediaType} ${tmdbId} S${season}E${episode}`;
+    console.log(`[AnimesUltra] Request: ${label}`);
+
     try {
-        console.log(`[AnimesUltra] Request: ${mediaType} ${tmdbId} S${season}E${episode}`);
-        const streams = await extractStreams(tmdbId, mediaType, season, episode);
-        return await expandStreamQualities(streams);
+        const streams = await withTimeout(
+            extractStreams(tmdbId, mediaType, season, episode),
+            PROVIDER_TIMEOUT,
+            label
+        );
+        return await expandStreamQualities(streams, {
+            includeCodec: true,
+            includeFps: true,
+        });
     } catch (error) {
-        console.error(`[AnimesUltra] Error: ${error.message}`);
+        if (error.message?.includes('[Timeout]')) {
+            console.warn(`[AnimesUltra] ${error.message}`);
+        } else {
+            console.error(`[AnimesUltra] Error: ${error.message}`);
+        }
         return [];
     }
 }

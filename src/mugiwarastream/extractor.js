@@ -377,7 +377,7 @@ async function getAnimeData(slug, mediaType) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episodeNum) {
-    const titles = await getTmdbTitles(tmdbId, mediaType);
+    const titles = await getTmdbTitles(tmdbId, mediaType, { season });
     if (!titles || titles.length === 0) return [];
 
     const slug = await findCachedSlug(titles);

@@ -193,7 +193,7 @@ async function getEpisodePageUrl(seriesUrl, season, episode) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
-  const titles = await getTmdbTitles(tmdbId, mediaType);
+  const titles = await getTmdbTitles(tmdbId, mediaType, { season });
   if (!titles || titles.length === 0) return [];
 
   const info = await findContent(titles, mediaType);
