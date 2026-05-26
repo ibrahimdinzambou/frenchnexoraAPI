@@ -19,6 +19,95 @@ function isLatinText(str) {
 }
 
 /**
+ * Check if the given ID is in Kitsu format: kitsu:{id}:{season?}
+ * @param {string|number} id
+ * @returns {RegExpMatchArray|null} Match groups [fullMatch, kitsuId, seasonFromId] or null
+ */
+function parseKitsuId(id) {
+    const strId = String(id);
+    return strId.match(/^kitsu:(\d+)(?::(\d+))?$/);
+}
+
+/**
+ * Get multiple titles for an anime from Kitsu ID.
+ * Uses Kitsu API to get canonical title, English title, Japanese title, and abbreviated titles.
+ * Generates season-aware variants if season is provided.
+ * 
+ * @param {string|number} kitsuId
+ * @param {'tv'|'movie'} mediaType
+ * @param {object} [opts]
+ * @param {number} [opts.season] - If provided, generates "Title Season N" variants
+ * @returns {Promise<string[]>}
+ */
+async function getKitsuTitles(kitsuId, mediaType, opts = {}) {
+    // Fetch anime details from Kitsu API
+    const url = `https://kitsu.io/api/edge/anime/${kitsuId}`;
+    const res = await safeFetch(url);
+    if (!res) {
+        console.log(`[Metadata] Kitsu API error: failed to fetch ${kitsuId}`);
+        return [];
+    }
+    
+    let data;
+    try {
+        data = await res.json();
+    } catch (e) {
+        console.log(`[Metadata] Kitsu API error: invalid JSON for ${kitsuId}`);
+        return [];
+    }
+    
+    const anime = data?.data?.attributes;
+    if (!anime) {
+        console.log(`[Metadata] Kitsu API error: no anime data for ${kitsuId}`);
+        return [];
+    }
+    
+    const titles = [];
+    
+    // Canonical title (often the Romaji title)
+    const canonicalTitle = anime.canonicalTitle?.trim();
+    if (canonicalTitle) titles.push(canonicalTitle);
+    
+    // English title
+    const enTitle = anime.titles?.en?.trim();
+    if (enTitle && !titles.some(t => t.toLowerCase() === enTitle.toLowerCase())) {
+        titles.push(enTitle);
+    }
+    
+    // Japanese title
+    const jaTitle = anime.titles?.ja_jp?.trim();
+    if (jaTitle && !titles.some(t => t.toLowerCase() === jaTitle.toLowerCase()) && isLatinText(jaTitle)) {
+        titles.push(jaTitle);
+    }
+    
+    // Abbreviated titles
+    const abbrTitles = anime.abbreviatedTitles || [];
+    for (const t of abbrTitles) {
+        const trimmed = t?.trim();
+        if (trimmed && !titles.some(existing => existing.toLowerCase() === trimmed.toLowerCase()) && isLatinText(trimmed)) {
+            titles.push(trimmed);
+        }
+    }
+    
+    // Season-aware variants
+    const season = opts.season ? parseInt(opts.season, 10) : null;
+    if (season && season > 0) {
+        const baseTitles = [canonicalTitle, enTitle].filter(Boolean);
+        for (const baseTitle of baseTitles) {
+            for (const suffix of SEASON_SUFFIXES) {
+                const variant = `${baseTitle} ${suffix(season)}`;
+                if (!titles.some(t => t.toLowerCase() === variant.toLowerCase())) {
+                    titles.push(variant);
+                }
+            }
+        }
+    }
+    
+    console.log(`[Metadata] Kitsu titles for ${kitsuId}: ${titles.join(' | ')}`);
+    return titles;
+}
+
+/**
  * Get multiple titles for an anime from TMDB ID.
  * Returns an array with [English title, French title, Original title (romaji)]
  * All unique values, ordered by priority for searching.
@@ -31,6 +120,16 @@ function isLatinText(str) {
  * @returns {Promise<string[]>}
  */
 export async function getTmdbTitles(tmdbId, mediaType, opts = {}) {
+    // Handle Kitsu ID format: kitsu:{id}:{season?}
+    const kitsuMatch = parseKitsuId(tmdbId);
+    if (kitsuMatch) {
+        const kitsuId = kitsuMatch[1];
+        const seasonFromId = kitsuMatch[2] ? parseInt(kitsuMatch[2], 10) : null;
+        // Use season from opts if provided, otherwise from the ID string
+        const finalSeason = opts.season !== undefined ? opts.season : seasonFromId;
+        return await getKitsuTitles(kitsuId, mediaType, { ...opts, season: finalSeason });
+    }
+
     const type = mediaType === 'movie' ? 'movie' : 'tv';
     const titles = [];
 
