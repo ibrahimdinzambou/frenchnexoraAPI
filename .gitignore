@@ -35,6 +35,7 @@ jspm_packages/
 
 # Optional npm cache directory
 .npm
+.agents/
 
 # Optional REPL history
 .node_repl_history
@@ -71,6 +72,7 @@ logs
 # Cache files
 .cache/
 *.cache
+skills-lock.json
 
 # Temporary files
 tmp/
