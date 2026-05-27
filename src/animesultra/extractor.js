@@ -164,7 +164,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     const queryKey = (t) => t.toLowerCase().replace(/[^a-z0-9àâéèêëîïôùûüç]/g, '').replace(/[.]+$/, '');
     const dedupQueries = new Set();
     const searchQueries = titlesOrdered.filter(t => {
-        if (!t || t.length > 50 || t.length < 3) return false;
+        if (!t || t.length > 50 || t.length < 5) return false;
         if (!/^[a-zA-Z0-9\sàâéèêëîïôùûüç'\-:!.,?()ÀÂÉÈÊËÎÏÔÙÛÜÇ]+$/.test(t)) return false;
         const key = queryKey(t);
         if (dedupQueries.has(key)) return false;

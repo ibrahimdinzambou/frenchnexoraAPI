@@ -10,6 +10,7 @@ import { getTmdbTitles } from '../utils/metadata.js';
 
 const BASE_URL = "https://vostfree.ws";
 const MAX_SEARCH_TITLES = 20;
+const MIN_QUERY_LENGTH = 5;
 
 function normalize(s) {
     if (!s) return '';
@@ -86,6 +87,9 @@ async function searchAnime(title) {
         // if (results.length === 0) { ... }
 
         console.log(`[Vostfree] Results found: ${results.length}`);
+        for (const r of results) {
+            console.log(`[Vostfree]   result: "${r.title}" | ${r.url}`);
+        }
 
         const matches = results.filter(r => titleMatches(r.title, title));
 
@@ -136,6 +140,8 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     for (const title of titlesOrdered.slice(0, MAX_SEARCH_TITLES)) {
         // Skip very long or non-descriptive titles (> 60 chars unlikely to match on VostFree)
         if (title.length > 60) continue;
+        // Skip very short queries (abbreviations like "ism" produce false positives)
+        if (title.length < MIN_QUERY_LENGTH) continue;
         // Deduplicate by normalized form (avoids searching similar variants)
         const n = normalize(title);
         if (!n || searchedNormalized.has(n)) continue;
@@ -157,6 +163,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         if (!hasSeasonMatch) {
             for (const title of titlesOrdered.slice(0, MAX_SEARCH_TITLES)) {
                 if (title.length > 60) continue;
+                if (title.length < MIN_QUERY_LENGTH) continue;
                 const seasonQuery = `${title} Saison ${effectiveSeason}`;
                 const n = normalize(seasonQuery);
                 if (!n || searchedNormalized.has(n)) continue;
