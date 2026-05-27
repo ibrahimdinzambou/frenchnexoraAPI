@@ -4,7 +4,7 @@
 
 import { fetchText } from './http.js';
 import cheerio from 'cheerio-without-node-native';
-import { resolveStream } from '../utils/resolvers.js';
+import { resolveStream, withTimeout } from '../utils/resolvers.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
 
@@ -17,14 +17,14 @@ const MAX_FALLBACK_SLUGS = 3;
  */
 async function searchSlugsScored(query) {
     try {
-        const html = await fetchText(`${BASE_URL}/template-php/defaut/fetch.php`, {
+        const html = await withTimeout(fetchText(`${BASE_URL}/template-php/defaut/fetch.php`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'Referer': BASE_URL
             },
             body: `query=${encodeURIComponent(query)}`
-        });
+        }), 8000, `search ${query.slice(0, 30)}`);
         const $ = cheerio.load(html);
         const results = [];
         $('a[href*="/catalogue/"]').each((i, el) => {
@@ -95,7 +95,7 @@ function parseUrls(jsContent) {
 async function fetchJs(slug, seasonPath, lang) {
     const url = `${BASE_URL}/catalogue/${slug}${seasonPath ? '/' + seasonPath : ''}/${lang}/episodes.js`;
     try {
-        const content = await fetchText(url);
+        const content = await withTimeout(fetchText(url), 8000, `fetchJs ${slug}`);
         return content || null;
     } catch (e) { return null; }
 }
@@ -239,6 +239,39 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         const numResults = await Promise.all(numPromises);
         for (const result of numResults) {
             streams.push(...result);
+        }
+    }
+
+    // Multi-title slug fallback: try slugs from ALL titles (incl. JP/FR) before search
+    if (streams.length === 0 && titles.length > 1) {
+        const triedSlugs = new Set([slug]);
+        const altSlugTasks = [];
+        const seasonSuffixRe = /-(?:saison|season|s)\d+$/i;
+
+        for (let i = 1; i < titles.length; i++) {
+            const altSlug = toSlug(titles[i]);
+            if (!altSlug || triedSlugs.has(altSlug)) continue;
+            triedSlugs.add(altSlug);
+            // Skip season-only variants of the same base slug
+            if (altSlug.replace(seasonSuffixRe, '') === slug) continue;
+            if (altSlugTasks.length >= 20) break;
+
+            for (const lang of languages) {
+                const task = withTimeout(
+                    fetchAndGetUrl(altSlug, lang, effectiveSeason, episode, mediaType, altEpisodes),
+                    5000,
+                    `alt-slug ${altSlug}`
+                ).catch(() => []);
+                altSlugTasks.push(task);
+            }
+        }
+
+        if (altSlugTasks.length > 0) {
+            console.log(`[Anime-Sama] Trying ${altSlugTasks.length} alt slug probes`);
+            const altResults = await Promise.all(altSlugTasks);
+            for (const result of altResults) {
+                streams.push(...result);
+            }
         }
     }
 

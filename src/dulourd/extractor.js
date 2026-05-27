@@ -204,16 +204,24 @@ async function findSlugFallback(titles, mediaType) {
 async function findContent(titles, mediaType) {
   const queries = extractSearchQueries(titles);
 
-  for (const query of queries) {
-    const results = await searchDle(query);
-    if (results.length > 0) {
-      const match = bestMatch(results, titles);
-      if (match && match.url) {
-        try {
-          const r = await safeFetch(match.url, { timeout: 5000 });
-          if (r && r.ok) { await r.text(); return match; }
-        } catch (e) { /* unreachable link */ }
-      }
+  const searchResults = await Promise.allSettled(
+    queries.map(query => searchDle(query))
+  );
+
+  const allResults = [];
+  for (const r of searchResults) {
+    if (r.status === 'fulfilled' && r.value.length > 0) {
+      allResults.push(...r.value);
+    }
+  }
+
+  if (allResults.length > 0) {
+    const match = bestMatch(allResults, titles);
+    if (match && match.url) {
+      try {
+        const r = await safeFetch(match.url, { timeout: 5000 });
+        if (r && r.ok) { await r.text(); return match; }
+      } catch (e) { /* unreachable link */ }
     }
   }
 

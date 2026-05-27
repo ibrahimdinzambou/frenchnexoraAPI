@@ -247,8 +247,43 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
   return extractSeries(tmdbId, mediaType, titles, season, episode, subType)
 }
 
+async function browseCategory(mediaType, titles) {
+  const baseType = mediaType === 'movie' ? 'films' : 'series'
+  const linkPattern = mediaType === 'movie' ? '/film/' : '/serie/'
+  const url = `${SITE.BASE_URL}/${baseType}`
+
+  try {
+    const html = await fetchText(url, { timeout: TIMEOUTS.PAGE })
+    const $ = cheerio.load(html)
+    const items = []
+
+    $(`a[href*="${linkPattern}"]`).each((i, el) => {
+      const href = $(el).attr('href') || ''
+      const title = $(el).text().trim() || $(el).find('img').first().attr('alt') || ''
+      if (href && title) {
+        items.push({
+          url: href.startsWith('http') ? href : `${SITE.BASE_URL}${href}`,
+          title,
+        })
+      }
+    })
+
+    if (items.length === 0) return null
+    console.log(`[Flemmix] Browsing ${baseType}: ${items.length} items`)
+
+    for (const title of titles.slice(0, MAX_SEARCH_TITLES)) {
+      const match = bestMatch(items, title)
+      if (match) return match
+    }
+    return null
+  } catch (e) {
+    console.warn(`[Flemmix] Category browse failed: ${e.message}`)
+    return null
+  }
+}
+
 async function extractMovie(tmdbId, titles, subType) {
-  const match = await trySearch(titles, false)
+  const match = await trySearch(titles, false) || await browseCategory('movie', titles)
   if (!match) {
     console.warn(`[Flemmix] Movie not found for TMDB ${tmdbId}`)
     return []
@@ -294,7 +329,7 @@ async function extractSeries(tmdbId, mediaType, titles, season, episode, subType
     console.warn(`[Flemmix] ArmSync failed: ${e.message}`)
   }
 
-  const match = await trySearch(titles, true)
+  const match = await trySearch(titles, true) || await browseCategory('tv', titles)
   if (!match) {
     console.warn(`[Flemmix] Series not found for TMDB ${tmdbId}`)
     return []
