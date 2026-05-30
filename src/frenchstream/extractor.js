@@ -152,14 +152,14 @@ function scoreCard(card, queryTitle, mediaType, season) {
 
 async function searchByTitle(title, mediaType, season) {
     const allCards = [];
-    for (const baseUrl of BASE_URLS) {
-        try {
+    const results = await Promise.allSettled(
+        BASE_URLS.map(baseUrl => {
             const url = baseUrl + '/index.php?do=search&subaction=search&story=' + encodeURIComponent(title);
-            const html = await fetchText(url, { baseUrl });
-            allCards.push(...parseSearchCards(html, baseUrl));
-        } catch (e) {
-            console.warn('[Frenchstream] Search failed on ' + baseUrl + ': ' + e.message);
-        }
+            return fetchText(url, { baseUrl }).then(html => parseSearchCards(html, baseUrl));
+        })
+    );
+    for (const r of results) {
+        if (r.status === 'fulfilled') allCards.push(...r.value);
     }
     const filtered = allCards.filter(c => mediaType === 'tv' ? c.isSeries : !c.isSeries);
     if (filtered.length === 0) return [];
@@ -285,7 +285,7 @@ async function fetchMovieSite(newsId, subType) {
 /* ---------- STREAM RESOLUTION ---------- */
 
 function resolveSingle(stream) {
-    return resolveStream(stream, { timeout: RESOLVE_TIMEOUT_MS });
+    return resolveStream(stream);
 }
 
 async function resolveCandidates(candidates) {

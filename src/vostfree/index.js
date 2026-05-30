@@ -1,7 +1,7 @@
 import { extractStreams } from './extractor.js';
 import { expandStreamQualities, withTimeout, safeConfig } from '../utils/resolvers.js';
 
-const PROVIDER_TIMEOUT = safeConfig('NUVIO_TIMEOUT_VOSTFREE', 120000);
+const PROVIDER_TIMEOUT = safeConfig('NUVIO_TIMEOUT_VOSTFREE', 60000);
 
 async function getStreams(tmdbId, mediaType, season, episode) {
     const label = `VostFree ${mediaType} ${tmdbId} S${season}E${episode}`;

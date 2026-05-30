@@ -44,6 +44,7 @@ This bundle integrates 17 pillars of the French streaming scene:
 | **Flemmix** | French dubbed/French subtitled movies/series on flemmix.me (custom PHP, SSR). | VF / VOSTFR | ✅ |
 | **Wookafr** | VF/VOSTFR films/series on wookafr.fyi (WordPress + SomosMovies). | VF / VOSTFR | ✅ |
 | **Coflix** | Stream movies and series in French/English subtitles on Coflix.wiki (DoodStream, LuluVid). | VF/VOSTFR | ✅ |
+
 *(Note: JetAnimes is currently marked with a warning as it heavily utilizes gatekeeping link redirectors like secured.lol)*
 
 **⚠️ Provider Status Legend:**

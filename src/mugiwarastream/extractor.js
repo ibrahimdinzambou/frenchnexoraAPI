@@ -212,15 +212,14 @@ function buildStreamEntry(url, label, langLabel, title, quality) {
 }
 
 async function resolveStreams(streams) {
-    const resolved = [];
-    for (const stream of streams) {
-        try {
-            const r = await resolveStream(stream);
-            if (r && r.url && r.isDirect) resolved.push(r);
-        } catch (e) {
-            resolved.push(stream);
-        }
-    }
+    const results = await Promise.allSettled(
+        streams.map(stream =>
+            resolveStream(stream)
+                .then(r => (r && r.url && r.isDirect) ? r : stream)
+                .catch(() => stream)
+        )
+    );
+    const resolved = results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean);
     return resolved.length > 0 ? resolved : streams;
 }
 
@@ -355,12 +354,19 @@ async function getAnimeData(slug, mediaType) {
         pageHtml = await fetchText(pageUrl);
     } catch (e) {
         if (mediaType !== 'movie') {
+            const probes = [];
             for (let s = 2; s <= 20; s++) {
-                try {
-                    pageHtml = await fetchText(`${BASE}/catalogue/${slug}/episodes/saison${s}`);
+                probes.push(
+                    fetchText(`${BASE}/catalogue/${slug}/episodes/saison${s}`)
+                        .then(html => ({ html }))
+                        .catch(() => null)
+                );
+            }
+            const settled = await Promise.allSettled(probes);
+            for (const r of settled) {
+                if (r.status === 'fulfilled' && r.value) {
+                    pageHtml = r.value.html;
                     break;
-                } catch (e2) {
-                    continue;
                 }
             }
         }

@@ -138,8 +138,17 @@ async function fetchAndGetUrl(slug, lang, season, episode, mediaType, altEpisode
 }
 
 async function tryFetchEpisode(slug, lang, season, episode) {
-    // Try main season
-    const mainJs = await fetchJs(slug, `saison${season}`, lang);
+    // Fetch all JS files in parallel: main season, sub-seasons 2-5, root
+    const [mainJs, sub2, sub3, sub4, sub5, rootJs] = await Promise.all([
+        fetchJs(slug, `saison${season}`, lang),
+        fetchJs(slug, `saison${season}-2`, lang),
+        fetchJs(slug, `saison${season}-3`, lang),
+        fetchJs(slug, `saison${season}-4`, lang),
+        fetchJs(slug, `saison${season}-5`, lang),
+        fetchJs(slug, '', lang),
+    ]);
+
+    // Process main season
     if (mainJs) {
         const parsed = parseUrls(mainJs);
         if (parsed.length > 0) {
@@ -148,11 +157,12 @@ async function tryFetchEpisode(slug, lang, season, episode) {
                 return buildStreams(parsed, lang, episode, episode - 1);
             }
             let cumulativeEps = totalEps;
-            for (let i = 2; i <= 5; i++) {
-                const subJs = await fetchJs(slug, `saison${season}-${i}`, lang);
-                if (!subJs) break;
+            const subJss = [sub2, sub3, sub4, sub5];
+            for (let i = 0; i < subJss.length; i++) {
+                const subJs = subJss[i];
+                if (!subJs) continue;
                 const subParsed = parseUrls(subJs);
-                if (subParsed.length === 0) break;
+                if (subParsed.length === 0) continue;
                 const subTotal = subParsed[0].urls.length;
                 const localEp = episode - cumulativeEps;
                 if (localEp >= 1 && localEp <= subTotal) {
@@ -164,7 +174,6 @@ async function tryFetchEpisode(slug, lang, season, episode) {
     }
 
     // Try root path (no season prefix)
-    const rootJs = await fetchJs(slug, '', lang);
     if (rootJs) {
         const parsed = parseUrls(rootJs);
         if (parsed.length > 0) {

@@ -210,7 +210,7 @@ function toStream(name, url, quality, language, subType) {
 
 async function resolveWithTimeout(stream) {
   try {
-    const resolved = await resolveStream(stream, { timeout: TIMEOUTS.RESOLVE })
+    const resolved = await resolveStream(stream)
     if (resolved && resolved.url && resolved.isDirect) return resolved
     if (resolved && resolved.url && !resolved.isDirect) return { ...resolved, isDirect: true }
     return null
@@ -220,17 +220,17 @@ async function resolveWithTimeout(stream) {
 }
 
 async function createStreamsFromServers(servers, name, subType) {
-  const streams = []
-  for (const server of servers) {
-    const stream = toStream(name, server.url, server.quality || 'HD', server.language || 'VF', subType)
-    const resolved = await resolveWithTimeout(stream)
-    if (resolved && resolved.url) {
-      streams.push({ ...resolved, provider: 'flemmix' })
-    } else {
-      streams.push({ ...stream, provider: 'flemmix' })
-    }
-  }
-  return streams
+  const results = await Promise.allSettled(
+    servers.map(async (server) => {
+      const stream = toStream(name, server.url, server.quality || 'HD', server.language || 'VF', subType)
+      const resolved = await resolveWithTimeout(stream)
+      if (resolved && resolved.url) {
+        return { ...resolved, provider: 'flemmix' }
+      }
+      return { ...stream, provider: 'flemmix' }
+    })
+  )
+  return results.filter(r => r.status === 'fulfilled').map(r => r.value)
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {

@@ -288,10 +288,10 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
     const languages = isMovie ? ['VF', 'VOSTFR'] : ['VOSTFR', 'VF'];
 
     if (isMovie) {
-        for (const lang of languages) {
-            const epStreams = await extractEpisodeStreams(slug, 1, 1, lang);
-            streams.push(...epStreams);
-        }
+        const results = await Promise.all(
+            languages.map(lang => extractEpisodeStreams(slug, 1, 1, lang))
+        );
+        for (const epStreams of results) streams.push(...epStreams);
         const validStreams = streams.filter(s => s && s.url);
         console.log(`[AnimeSite] Total streams found: ${validStreams.length}`);
         return validStreams;
@@ -330,16 +330,21 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
         const subCount = parseInt(subSeason.numberOfEpisodes) || 0;
         if (subCount === 0) continue;
 
+        const epTasks = [];
         for (let ep = 1; ep <= subCount; ep++) {
             const cumulative = ep + cumulativeOffset;
             const isTarget = targetEpisodes.some(t => t === cumulative);
             if (!isTarget) continue;
 
             for (const lang of languages) {
-                const langStreams = await extractEpisodeStreams(slug, subNum, ep, lang);
-                streams.push(...langStreams);
+                epTasks.push(
+                    extractEpisodeStreams(slug, subNum, ep, lang)
+                        .then(langStreams => streams.push(...langStreams))
+                        .catch(() => {})
+                );
             }
         }
+        await Promise.allSettled(epTasks);
         cumulativeOffset += subCount;
     }
 

@@ -152,9 +152,14 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     }
 
     let matches = [];
-    for (const title of titlesOrdered) {
-        matches = await searchAnime(title);
-        if (matches && matches.length > 0) break;
+    const searchResults = await Promise.allSettled(
+        titlesOrdered.map(t => searchAnime(t))
+    );
+    for (const r of searchResults) {
+        if (r.status === 'fulfilled' && r.value && r.value.length > 0) {
+            matches = r.value;
+            break;
+        }
     }
 
     if (!matches || matches.length === 0) return [];
@@ -185,21 +190,19 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
     const streams = [];
     const seenUrls = new Set();
-    const pagesChecked = new Set();
-    let pagesCheckedCount = 0;
     const MAX_PAGES = 4;
 
-    for (const match of scored) {
-        if (pagesChecked.has(match.url)) continue;
-        pagesChecked.add(match.url);
+    const uniqueMatches = [];
+    const matchUrls = new Set();
+    for (const m of scored) {
+        if (matchUrls.has(m.url)) continue;
+        matchUrls.add(m.url);
+        if (m.detectedSeason !== null && m.detectedSeason !== effectiveSeason) continue;
+        uniqueMatches.push(m);
+        if (uniqueMatches.length >= MAX_PAGES) break;
+    }
 
-            if (match.detectedSeason !== null && match.detectedSeason !== effectiveSeason) {
-            continue;
-        }
-
-        if (pagesCheckedCount >= MAX_PAGES) break;
-        pagesCheckedCount++;
-
+    const matchPromises = uniqueMatches.map(async (match) => {
         try {
             const html = await fetchText(match.url);
 
@@ -211,7 +214,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
             if (allPlayerUrls.length === 0) {
                 console.log(`[French-Anime] ${match.url}: no episode data for target ${targetEpisodes}`);
-                continue;
+                return [];
             }
 
             const langLabel = match.lang || detectPageLang(match.url);
@@ -235,17 +238,25 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
             });
 
             const results = await Promise.all(hostPromises);
-            let found = 0;
+            const matchStreams = [];
             for (const stream of results) {
                 if (stream && stream.isDirect) {
-                    streams.push(stream);
-                    found++;
+                    matchStreams.push(stream);
                 }
             }
 
-            console.log(`[French-Anime] ${match.url}: ${allPlayerUrls.length} sources, ${found} direct`);
+            console.log(`[French-Anime] ${match.url}: ${allPlayerUrls.length} sources, ${matchStreams.length} direct`);
+            return matchStreams;
         } catch (err) {
             console.error(`[French-Anime] Failed to fetch ${match.url}: ${err.message}`);
+            return [];
+        }
+    });
+
+    const results = await Promise.allSettled(matchPromises);
+    for (const r of results) {
+        if (r.status === 'fulfilled') {
+            streams.push(...r.value);
         }
     }
 
