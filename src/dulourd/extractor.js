@@ -39,15 +39,13 @@ function extractXfields(html) {
 }
 
 async function resolveStreamsFromEpisode(episodeId, xfields, subType) {
-  const streams = [];
-
-  for (const xfield of xfields) {
-    try {
+  const results = await Promise.allSettled(
+    xfields.map(async (xfield) => {
       const iframeHtml = await fetchApi(episodeId, xfield);
-      if (!iframeHtml) continue;
+      if (!iframeHtml) return null;
 
       const srcMatch = iframeHtml.match(/src="([^"]+)"/);
-      if (!srcMatch) continue;
+      if (!srcMatch) return null;
 
       const embedUrl = srcMatch[1];
       const parts = xfield.split('_');
@@ -63,14 +61,15 @@ async function resolveStreamsFromEpisode(episodeId, xfields, subType) {
 
       if (stream && stream.isDirect) {
         if (subType) stream.subType = subType;
-        streams.push(stream);
+        return stream;
       }
-    } catch (e) {
-      console.warn(`[DuLourd] Failed to resolve ${xfield}: ${e.message}`);
-    }
-  }
+      return null;
+    })
+  );
 
-  return streams;
+  return results
+    .filter(r => r.status === 'fulfilled' && r.value)
+    .map(r => r.value);
 }
 
 function normalize(s) {

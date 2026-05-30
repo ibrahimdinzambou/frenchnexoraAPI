@@ -136,23 +136,22 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
     let allMatches = [];
     const seenUrls = new Set();
-    const searchedNormalized = new Set();
-    for (const title of titlesOrdered.slice(0, MAX_SEARCH_TITLES)) {
-        // Skip very long or non-descriptive titles (> 60 chars unlikely to match on VostFree)
-        if (title.length > 60) continue;
-        // Skip very short queries (abbreviations like "ism" produce false positives)
-        if (title.length < MIN_QUERY_LENGTH) continue;
-        // Deduplicate by normalized form (avoids searching similar variants)
-        const n = normalize(title);
-        if (!n || searchedNormalized.has(n)) continue;
-        searchedNormalized.add(n);
-        const batch = await searchAnime(title);
-        if (batch && batch.length > 0) {
-            for (const m of batch) {
-                if (!seenUrls.has(m.url)) {
-                    seenUrls.add(m.url);
-                    allMatches.push(m);
-                }
+    // Search all titles in parallel
+    const searchResults = await Promise.allSettled(
+        titlesOrdered.slice(0, MAX_SEARCH_TITLES).map(title => {
+            if (title.length > 60) return Promise.resolve([]);
+            if (title.length < MIN_QUERY_LENGTH) return Promise.resolve([]);
+            const n = normalize(title);
+            if (!n) return Promise.resolve([]);
+            return searchAnime(title).then(batch => batch || []);
+        })
+    );
+    for (const r of searchResults) {
+        if (r.status !== 'fulfilled' || r.value.length === 0) continue;
+        for (const m of r.value) {
+            if (!seenUrls.has(m.url)) {
+                seenUrls.add(m.url);
+                allMatches.push(m);
             }
         }
     }

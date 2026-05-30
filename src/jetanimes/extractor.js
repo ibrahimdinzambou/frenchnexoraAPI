@@ -155,14 +155,19 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
             if (isMovie) {
                 if (!postId) continue;
-                for (let n = 1; n <= 3; n++) {
-                    const embedUrl = await fetchEmbed(postId, n, 'movie', match.url);
-                    if (!embedUrl) continue;
-                    const resolved = await resolveStream({
-                        name: 'JetAnimes', title: langName, url: embedUrl,
-                        quality: 'HD', headers: { Referer: BASE_URL }
-                    });
-                    if (resolved && resolved.isDirect) return [resolved];
+                const movieResults = await Promise.allSettled(
+                    [1, 2, 3].map(n =>
+                        fetchEmbed(postId, n, 'movie', match.url).then(embedUrl => {
+                            if (!embedUrl) return null;
+                            return resolveStream({
+                                name: 'JetAnimes', title: langName, url: embedUrl,
+                                quality: 'HD', headers: { Referer: BASE_URL }
+                            });
+                        })
+                    )
+                );
+                for (const r of movieResults) {
+                    if (r.status === 'fulfilled' && r.value && r.value.isDirect) return [r.value];
                 }
             } else {
                 const targetSeason = Number(effectiveSeason) || 1;
@@ -186,17 +191,22 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
                 if (!epPostId) continue;
 
-                for (let n = 1; n <= 5; n++) {
-                    const embedUrl = await fetchEmbed(epPostId, n, 'tv', epLink);
-                    if (!embedUrl) continue;
-                    const resolved = await resolveStream({
-                        name: 'JetAnimes',
-                        title: `${langName} - Player ${n}`,
-                        url: embedUrl,
-                        quality: 'HD',
-                        headers: { Referer: BASE_URL }
-                    });
-                    if (resolved && resolved.isDirect) return [resolved];
+                const tvResults = await Promise.allSettled(
+                    [1, 2, 3, 4, 5].map(n =>
+                        fetchEmbed(epPostId, n, 'tv', epLink).then(embedUrl => {
+                            if (!embedUrl) return null;
+                            return resolveStream({
+                                name: 'JetAnimes',
+                                title: `${langName} - Player ${n}`,
+                                url: embedUrl,
+                                quality: 'HD',
+                                headers: { Referer: BASE_URL }
+                            });
+                        })
+                    )
+                );
+                for (const r of tvResults) {
+                    if (r.status === 'fulfilled' && r.value && r.value.isDirect) return [r.value];
                 }
             }
         } catch (e) {

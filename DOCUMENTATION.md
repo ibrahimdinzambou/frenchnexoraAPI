@@ -55,10 +55,13 @@ User taps content → PluginManager.executeScrapers()
 
 ### 1.3 Flavors
 
-| Flavor | Plugin Support | Package ID |
-|---|---|---|
-| `full` | Enabled | `com.nuvio.tv` |
-| `playstore` | Disabled (no-op stubs) | `com.nuvio.app` |
+| Flavor | Plugin Support | Package ID | OkHttp timeout | Response raw limit |
+|---|---|---|---|---|
+| `full` (NuvioTV) | Enabled | `com.nuvio.tv` | **30s** | **256 KB** |
+| `full` (NuvioMobile) | Enabled | `com.nuvio.app` | **60s** | **1 MB** |
+| `playstore` (NuvioMobile) | Disabled (no-op stubs) | `com.nuvio.app` | N/A | N/A |
+
+**⚠️ Critical Difference:** NuvioTV has OkHttp timeouts **2x shorter** than NuvioMobile (30s vs. 60s). A provider whose HTTP requests take between 30s and 60s will succeed on Mobile but fail on TV. Providers must be designed to operate within the most restrictive window (30s per request, 60s total plugin).
 
 ---
 
@@ -127,10 +130,10 @@ async function fetch(url, options) {
 ```
 
 **Limitations:**
-- Response body truncated at **256 KB** (bytes and chars)
+- Response body truncated at **256 KB** (chars) — raw bytes limit varies : **256 KB** (NuvioTV) or **1 MB** (NuvioMobile)
 - Header values truncated at **8 KB**
 - No `response.body.getReader()`, `response.clone()`, `response.headers.entries()`
-- No `AbortSignal.timeout()`
+- **No `AbortSignal.timeout()`** — timeouts passed to `safeFetch()` (e.g., `timeout: 15000`) are **ignored**. The only effective timeout per request is that of native OkHttp (30s TV, 60s Mobile).
 - `response.json()` returns `null` (not rejected promise) on parse error
 
 ### 2.4 `cheerio` API
@@ -385,11 +388,16 @@ Logcat filter: `adb logcat -s "Plugin:*"`
 
 ### 6.1 Timeouts
 
-| Limit | Value | Source |
-|---|---|---|
-| JS plugin execution | 60s | `PluginRuntime.kt` |
-| Full scraper lifecycle | 120s | `PluginManager.kt` |
-| HTTP connect / read / write | 30s each | `PluginRuntime.kt` |
+| Limit | NuvioTV (full) | NuvioMobile (full) | Source |
+|---|---|---|---|
+| JS plugin execution | **60s** | **60s** | `PluginRuntime.kt` |
+| Full scraper lifecycle | **120s** | N/A | `PluginManager.kt` |
+| HTTP connect / read / write | **30s each** | **60s each** | `PluginRuntime.kt` / `AddonPlatform` |
+
+**Consequence:** NuvioTV has a budget of **30 seconds per HTTP request** compared to **60 seconds** on mobile. The `AbortSignal.timeout()` timeouts passed in `safeFetch()` are ignored in QuickJS (see §2.3). The only effective timeout per call is that of native OkHttp. To avoid exceeding the `PLUGIN_TIMEOUT_MS` (60 seconds), you must:
+- Parallelize HTTP requests with `Promise.allSettled`
+- Avoid long sequential fallback chains
+- Use HEAD requests to test URLs before GET requests
 
 ### 6.2 Network
 

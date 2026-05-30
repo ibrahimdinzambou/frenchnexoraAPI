@@ -308,14 +308,18 @@ export async function expandStreamQualities(streams, options = {}) {
     const input = Array.isArray(streams) ? streams : [];
     const expanded = [];
 
-    for (const stream of input) {
-        try {
-            const variants = await expandSingleStreamQualities(stream, options);
-            for (const variant of variants) {
+    const results = await Promise.allSettled(
+        input.map(stream => expandSingleStreamQualities(stream, options))
+    );
+    for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        const stream = input[i];
+        if (r.status === 'fulfilled') {
+            for (const variant of r.value) {
                 expanded.push(variant);
             }
-        } catch (e) {
-            if (stream) expanded.push({ ...stream, quality: normalizeQualityLabel(stream.quality || 'HD'), type: inferType(stream.url) });
+        } else if (stream) {
+            expanded.push({ ...stream, quality: normalizeQualityLabel(stream.quality || 'HD'), type: inferType(stream.url) });
         }
     }
 
@@ -345,6 +349,8 @@ export async function expandStreamQualities(streams, options = {}) {
 }
 
 export async function safeFetch(url, options = {}) {
+    const start = Date.now();
+    const SLOW_THRESHOLD = 15000;
     try {
         const { timeout, ...rest } = options;
         const fetchOpts = {
@@ -356,6 +362,10 @@ export async function safeFetch(url, options = {}) {
             fetchOpts.signal = AbortSignal.timeout(timeout);
         }
         const response = await fetch(url, fetchOpts);
+        const elapsed = Date.now() - start;
+        if (elapsed > SLOW_THRESHOLD) {
+            console.warn(`[safeFetch] Slow request (${elapsed}ms): ${(url || '').slice(0, 120)}`);
+        }
         if (!response) return null;
 
         const status = response.status;
@@ -377,6 +387,10 @@ export async function safeFetch(url, options = {}) {
             headers: response.headers
         };
     } catch (e) {
+        const elapsed = Date.now() - start;
+        if (elapsed > SLOW_THRESHOLD) {
+            console.warn(`[safeFetch] Slow request failed (${elapsed}ms): ${(url || '').slice(0, 120)}`);
+        }
         return null;
     }
 }

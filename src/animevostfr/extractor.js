@@ -405,13 +405,21 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     }
 
     let matches = [];
-    const triedTitles = new Set();
-    for (const t of shortTitles) {
+    const seenKeys = new Set();
+    const uniqueTitles = shortTitles.filter(t => {
         const key = t.toLowerCase().trim();
-        if (triedTitles.has(key)) continue;
-        triedTitles.add(key);
-        matches = await searchAnime(t);
-        if (matches && matches.length > 0) break;
+        if (seenKeys.has(key)) return false;
+        seenKeys.add(key);
+        return true;
+    });
+    const searchResults = await Promise.allSettled(
+        uniqueTitles.map(t => searchAnime(t))
+    );
+    for (const r of searchResults) {
+        if (r.status === 'fulfilled' && r.value && r.value.length > 0) {
+            matches = r.value;
+            break;
+        }
     }
     if (!matches || matches.length === 0) return [];
 
@@ -430,44 +438,53 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
     const streams = [];
     const checkedEpisodeUrls = new Set();
-    const checkedSeriesUrls = new Set();
     const mainTitle = titlesOrdered[0]?.toLowerCase() || '';
     const mainWords = mainTitle.split(/\s+/).filter(w => w.length > 3);
 
-    for (const match of matches) {
-        if (checkedSeriesUrls.has(match.url)) continue;
-        checkedSeriesUrls.add(match.url);
+    const uniqueMatches = [];
+    const seenMatchUrls = new Set();
+    for (const m of matches) {
+        if (!seenMatchUrls.has(m.url)) {
+            seenMatchUrls.add(m.url);
+            uniqueMatches.push(m);
+        }
+    }
 
+    const matchPromises = uniqueMatches.map(async (match) => {
         const matchLower = match.title.toLowerCase();
         const isVf = matchLower.includes(' vf') || match.url.includes('vf');
         const langSuffix = isVf ? 'VF' : 'VOSTFR';
 
-        // Detect spinoff/prelude: if match title contains spinoff keywords not in the main title
         const spinoffKeywords = ['vigilantes', 'prelude', 'special', 'ova', 'ona'];
         const isSpinoff = spinoffKeywords.some(k => matchLower.includes(k))
             && !mainWords.some(w => matchLower.includes(w));
-        // If it looks like a spinoff and we have other matches, skip it
-        if (isSpinoff && matches.length > 1) {
+        if (isSpinoff && uniqueMatches.length > 1) {
             console.log(`[AnimeVOSTFR] Skipping spinoff match: ${match.title}`);
-            continue;
+            return [];
         }
 
-        // Optimization: if the result is explicitly for a different season, 
-        // skip it unless targetEpisodes contains an absolute episode (which might be in any season page)
         const seasonMatchText = matchLower.match(/saison\s*(\d+)/);
         if (seasonMatchText && parseInt(seasonMatchText[1]) !== Number(searchSeason) && targetEpisodes.length === 1) {
-            continue;
+            return [];
         }
 
-        for (const ep of targetEpisodes) {
-            // Find the episode URL from the series page
-            const isAbsolute = ep !== searchEpisode;
-            const episodeUrl = await findEpisodeUrl(match.url, searchSeason, ep, isAbsolute);
-            if (episodeUrl && !checkedEpisodeUrls.has(episodeUrl)) {
-                checkedEpisodeUrls.add(episodeUrl);
-                const playerStreams = await extractPlayersFromEpisode(episodeUrl);
-                
-                // Add language/episode context to names
+        const epResults = await Promise.allSettled(
+            targetEpisodes.map(async (ep) => {
+                const isAbsolute = ep !== searchEpisode;
+                const episodeUrl = await findEpisodeUrl(match.url, searchSeason, ep, isAbsolute);
+                if (episodeUrl && !checkedEpisodeUrls.has(episodeUrl)) {
+                    checkedEpisodeUrls.add(episodeUrl);
+                    const playerStreams = await extractPlayersFromEpisode(episodeUrl);
+                    return { ep, playerStreams };
+                }
+                return null;
+            })
+        );
+
+        const matchStreams = [];
+        for (const r of epResults) {
+            if (r.status === 'fulfilled' && r.value) {
+                const { ep, playerStreams } = r.value;
                 const epType = ep === searchEpisode ? "" : ` (Abs ${ep})`;
                 playerStreams.forEach(s => {
                     if (!s.name.includes('(')) {
@@ -479,9 +496,16 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
                         s.title = `${s.title}${epType}`;
                     }
                 });
-                
-                streams.push(...playerStreams);
+                matchStreams.push(...playerStreams);
             }
+        }
+        return matchStreams;
+    });
+
+    const results = await Promise.allSettled(matchPromises);
+    for (const r of results) {
+        if (r.status === 'fulfilled') {
+            streams.push(...r.value);
         }
     }
 

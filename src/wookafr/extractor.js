@@ -175,13 +175,13 @@ async function detectSubType(tmdbId, mediaType, titles) {
 
 async function trySearch(titles) {
   const domains = [...new Set([SITE.BASE_URL, ...SITE.DOMAINS])]
-  for (const domain of domains) {
-    for (const title of titles.slice(0, MAX_SEARCH_TITLES)) {
+  const probes = domains.flatMap(domain =>
+    titles.slice(0, MAX_SEARCH_TITLES).map(async (title) => {
       try {
         const url = `${domain}/?s=${encodeURIComponent(title)}`
         const html = await fetchText(url, { timeout: TIMEOUTS.SEARCH })
         const results = parseSearchResults(html)
-        if (results.length === 0) continue
+        if (results.length === 0) return null
 
         const movieResults = results.filter(r => !r.isSeries)
         const match = bestMatch(movieResults.length > 0 ? movieResults : results, title)
@@ -192,7 +192,12 @@ async function trySearch(titles) {
       } catch (e) {
         console.warn(`[Wookafr] Search failed for "${title}": ${e.message}`)
       }
-    }
+      return null
+    })
+  )
+  const settled = await Promise.allSettled(probes)
+  for (const r of settled) {
+    if (r.status === 'fulfilled' && r.value) return r.value
   }
   const slugMatch = await trySlugFallback(titles[0], 'movie')
   if (slugMatch) { console.log(`[Wookafr] Found via slug: ${slugMatch.url}`); return slugMatch }
@@ -201,8 +206,8 @@ async function trySearch(titles) {
 
 async function trySearchSeries(titles) {
   const domains = [...new Set([SITE.BASE_URL, ...SITE.DOMAINS])]
-  for (const domain of domains) {
-    for (const title of titles.slice(0, MAX_SEARCH_TITLES)) {
+  const probes = domains.flatMap(domain =>
+    titles.slice(0, MAX_SEARCH_TITLES).map(async (title) => {
       try {
         const url = `${domain}/?s=${encodeURIComponent(title)}`
         const html = await fetchText(url, { timeout: TIMEOUTS.SEARCH })
@@ -227,7 +232,12 @@ async function trySearchSeries(titles) {
       } catch (e) {
         console.warn(`[Wookafr] Series search failed for "${title}": ${e.message}`)
       }
-    }
+      return null
+    })
+  )
+  const settled = await Promise.allSettled(probes)
+  for (const r of settled) {
+    if (r.status === 'fulfilled' && r.value) return r.value
   }
   const slugMatch = await trySlugFallback(titles[0], 'series')
   if (slugMatch) { console.log(`[Wookafr] Found series via slug: ${slugMatch.url}`); return slugMatch }
@@ -327,7 +337,7 @@ async function extractMovie(tmdbId, titles, subType) {
 
       console.log(`[Wookafr] Iframe: ${iframeUrl} [${lang}]`)
       const stream = toStream('Wookafr', iframeUrl, quality, lang, subType)
-      const resolved = await resolveStream(stream, TIMEOUTS.RESOLVE)
+      const resolved = await resolveStream(stream)
       if (resolved && resolved.url) return [{ ...resolved, provider: 'wookafr' }]
   } catch (e) {
     console.warn(`[Wookafr] Movie extraction failed: ${e.message}`)
@@ -369,7 +379,7 @@ async function extractSeries(tmdbId, mediaType, titles, season, episode, subType
         const lang = detectLanguage(match.url, seriesHtml)
         const quality = detectQuality(iframeUrl, match.title)
         const stream = toStream('Wookafr', iframeUrl, quality, lang, subType)
-        const resolved = await resolveStream(stream, TIMEOUTS.RESOLVE)
+        const resolved = await resolveStream(stream)
         if (resolved && resolved.url) return [{ ...resolved, provider: 'wookafr' }]
       }
       return []
@@ -436,7 +446,7 @@ async function extractSeries(tmdbId, mediaType, titles, season, episode, subType
 
     console.log(`[Wookafr] Iframe: ${iframeUrl} [${lang}]`)
     const stream = toStream('Wookafr', iframeUrl, quality, lang, subType)
-    const resolved = await resolveStream(stream, TIMEOUTS.RESOLVE)
+    const resolved = await resolveStream(stream)
     if (resolved && resolved.url) return [{ ...resolved, provider: 'wookafr' }]
   } catch (e) {
     console.warn(`[Wookafr] Series extraction failed: ${e.message}`)

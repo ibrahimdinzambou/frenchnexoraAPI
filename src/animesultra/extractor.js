@@ -179,34 +179,22 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     });
 
     const searchedQueries = new Set();
-    let searchCount = 0;
-    for (const q of searchQueries) {
-        if (matches.length >= 20) break;
-        if (searchCount >= 8) break;
-        searchCount++;
-        const before = matches.length;
-        await trySearch(q);
-        searchedQueries.add(queryKey(q));
-        if (matches.length > before) {
-            const newMatches = matches.slice(before);
-            if (newMatches.every(m => /(?:\s*:\s*|\s+-\s+)(?!\d|saison|partie|part)/i.test(m.title.replace(/ (VF|VOSTFR)$/i, '')))) {
-                const core = (() => {
-                    const sk = q.toLowerCase().replace(/[^a-z0-9àâéèêëîïôùûüç]/g, '');
-                    for (const t of titlesOrdered) {
-                        const k = t.toLowerCase().replace(/[^a-z0-9àâéèêëîïôùûüç]/g, '');
-                        if (k.includes(sk) || sk.includes(k)) continue;
-                        if (k.length < 4) continue;
-                        if (!/^[a-zA-Z0-9\sàâéèêëîïôùûüç'\-:!.,?()ÀÂÉÈÊËÎÏÔÙÛÜÇ]+$/.test(t)) continue;
-                        if (/(?:\s*:\s*|\s+-\s+)/.test(t.replace(/ (VF|VOSTFR)$/i, ''))) continue;
-                        return t;
-                    }
-                    return null;
-                })();
-                if (core && !searchedQueries.has(queryKey(core))) {
-                    searchedQueries.add(queryKey(core));
-                    await trySearch(core);
-                }
-            }
+    const searchPromises = searchQueries.slice(0, 8).map(q =>
+        trySearch(q).then(() => searchedQueries.add(queryKey(q)))
+    );
+    await Promise.allSettled(searchPromises);
+
+    const spinoffPattern = /(?:\s*:\s*|\s+-\s+)(?!\d|saison|partie|part)/i;
+    if (matches.length > 0 && matches.every(m => spinoffPattern.test(m.title.replace(/ (VF|VOSTFR)$/i, '')))) {
+        for (const t of titlesOrdered) {
+            const k = t.toLowerCase().replace(/[^a-z0-9àâéèêëîïôùûüç]/g, '');
+            const key = queryKey(t);
+            if (k.length < 4 || searchedQueries.has(key)) continue;
+            if (!/^[a-zA-Z0-9\sàâéèêëîïôùûüç'\-:!.,?()ÀÂÉÈÊËÎÏÔÙÛÜÇ]+$/.test(t)) continue;
+            if (spinoffPattern.test(t.replace(/ (VF|VOSTFR)$/i, ''))) continue;
+            searchedQueries.add(key);
+            await trySearch(t);
+            break;
         }
     }
     
@@ -340,10 +328,14 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
             processedCount++;
 
-            for (const epHref of epHrefs) {
-                const servers = await fetchEpisodeServers(epHref, $, lang);
-                for (const { url, sname } of servers) {
-                    pushStream(url, lang, sname);
+            const epResults = await Promise.allSettled(
+                epHrefs.map(epHref => fetchEpisodeServers(epHref, $, lang))
+            );
+            for (const r of epResults) {
+                if (r.status === 'fulfilled') {
+                    for (const { url, sname } of r.value) {
+                        pushStream(url, lang, sname);
+                    }
                 }
             }
         } catch (e) {
@@ -385,10 +377,14 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
                 processedCount++;
 
-                for (const epHref of epHrefs) {
-                    const servers = await fetchEpisodeServers(epHref, $, lang);
-                    for (const { url, sname } of servers) {
-                        pushStream(url, lang, sname);
+                const epResults = await Promise.allSettled(
+                    epHrefs.map(epHref => fetchEpisodeServers(epHref, $, lang))
+                );
+                for (const r of epResults) {
+                    if (r.status === 'fulfilled') {
+                        for (const { url, sname } of r.value) {
+                            pushStream(url, lang, sname);
+                        }
                     }
                 }
             } catch (e) {
@@ -445,10 +441,14 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
                             if (href) epHrefs.push(href);
                         }
                     });
-                    for (const epHref of epHrefs) {
-                        const servers = await fetchEpisodeServers(epHref, $c, lv.lang === 'vf' ? 'VF' : 'VOSTFR');
-                        for (const { url, sname } of servers) {
-                            pushStream(url, lv.lang === 'vf' ? 'VF' : 'VOSTFR', sname);
+                    const epResults = await Promise.allSettled(
+                        epHrefs.map(epHref => fetchEpisodeServers(epHref, $c, lv.lang === 'vf' ? 'VF' : 'VOSTFR'))
+                    );
+                    for (const r of epResults) {
+                        if (r.status === 'fulfilled') {
+                            for (const { url, sname } of r.value) {
+                                pushStream(url, lv.lang === 'vf' ? 'VF' : 'VOSTFR', sname);
+                            }
                         }
                     }
                 }

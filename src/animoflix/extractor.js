@@ -159,70 +159,58 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
     }
 
     let bestMatch = null;
-    let bestScore = 0;
-    let searches = 0;
     const badSlugs = new Set();
 
-    while (searches < MAX_TITLE_SEARCHES) {
-        const titlesRemaining = titles.slice(searches);
-        let foundNewCandidate = false;
+    // Search all titles in parallel (up to MAX_TITLE_SEARCHES)
+    const searchPromises = titles.slice(0, MAX_TITLE_SEARCHES).map(searchTitle =>
+        searchAnime(searchTitle).then(results => {
+            const nt = normalize(searchTitle);
+            if (nt.length < 4) return [];
+            return results.filter(r => !SPECIAL_SLUG_RE.test(r.slug) && !badSlugs.has(r.slug))
+                .map(r => ({ ...r, _queryTitle: searchTitle }));
+        }).catch(() => [])
+    );
 
-        for (const title of titlesRemaining) {
-            if (searches >= MAX_TITLE_SEARCHES) break;
-            searches++;
+    const allResults = (await Promise.allSettled(searchPromises))
+        .flatMap(r => r.status === 'fulfilled' ? r.value : []);
 
-            const nt = normalize(title);
-            if (nt.length < 4) continue;
-
-            const results = await searchAnime(title);
-            if (results.length === 0) continue;
-
-            for (const r of results) {
-                if (SPECIAL_SLUG_RE.test(r.slug)) continue;
-                if (badSlugs.has(r.slug)) continue;
-                const score = scoreSearchMatch(r, title);
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestMatch = r;
-                    foundNewCandidate = true;
-                } else if (score === bestScore && score > 0) {
-                    const rLen = normalize(r.title).length;
-                    const bLen = normalize(bestMatch.title).length;
-                    if (rLen < bLen) {
-                        bestScore = score;
-                        bestMatch = r;
-                        foundNewCandidate = true;
-                    }
-                }
-            }
+    // Score and deduplicate by slug
+    const scored = new Map();
+    for (const r of allResults) {
+        if (badSlugs.has(r.slug)) continue;
+        const score = scoreSearchMatch(r, r._queryTitle);
+        const existing = scored.get(r.slug);
+        if (!existing || score > existing.score) {
+            scored.set(r.slug, { ...r, score });
         }
+    }
 
-        if (!bestMatch || !foundNewCandidate) break;
+    const ranked = [...scored.values()].sort((a, b) => b.score - a.score);
 
-        // Verify with page title before accepting
-        const verifyHtml = await fetchWithRetry(`${BASE_URL}/anime/${bestMatch.slug}/`, { timeout: TIMEOUT });
+    // Verify candidates in order (best score first)
+    for (const candidate of ranked) {
+        const verifyHtml = await fetchWithRetry(`${BASE_URL}/anime/${candidate.slug}/`, { timeout: TIMEOUT });
         const $v = cheerio.load(verifyHtml);
         const pageTitle = $v('h1.anime-title-pro').first().text().trim();
         let matchOk = true;
         if (!pageTitle) {
-            console.warn(`[AnimoFlix] No page title found for slug ${bestMatch.slug} — rejecting`);
-            badSlugs.add(bestMatch.slug);
-            bestMatch = null;
-            bestScore = 0;
+            console.warn(`[AnimoFlix] No page title found for slug ${candidate.slug} — rejecting`);
+            badSlugs.add(candidate.slug);
             matchOk = false;
         } else {
             const nPage = normalize(pageTitle);
             const nTmdbTitles = titles.slice(0, 5).map(t => normalize(t));
             const matchesTmdb = nTmdbTitles.some(nt => nPage.includes(nt) || nt.includes(nPage));
             if (!matchesTmdb) {
-                console.warn(`[AnimoFlix] Page title mismatch: "${pageTitle}" doesn't match any TMDB title — rejecting slug ${bestMatch.slug}`);
-                badSlugs.add(bestMatch.slug);
-                bestMatch = null;
-                bestScore = 0;
+                console.warn(`[AnimoFlix] Page title mismatch: "${pageTitle}" doesn't match any TMDB title — rejecting slug ${candidate.slug}`);
+                badSlugs.add(candidate.slug);
                 matchOk = false;
             }
         }
-        if (matchOk) break;
+        if (matchOk) {
+            bestMatch = candidate;
+            break;
+        }
     }
 
     if (!bestMatch) {
@@ -315,26 +303,26 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
             });
         }
 
+        const epTasks = [];
         for (const lang of langs) {
             const episodes = episodeLinks[lang] || [];
             if (episodes.length === 0) continue;
 
             for (const targetEp of targetEpisodes) {
-                // Match by either relative episode number or cumulative (cross-part) episode number
                 const episode = episodes.find(e => e.num === targetEp || e.cumulative === targetEp);
                 if (!episode) continue;
                 if (checkedEpisodeUrls.has(episode.href)) continue;
                 checkedEpisodeUrls.add(episode.href);
 
                 const langLabel = lang === 'vf' ? 'VF' : 'VOSTFR';
-                try {
-                    const epStreams = await extractEpisodeStreams(episode.href, langLabel, slug);
-                    streams.push(...epStreams);
-                } catch (e) {
-                    console.warn(`[AnimoFlix] Failed to extract ${lang} ep ${targetEp}: ${e.message}`);
-                }
+                epTasks.push(
+                    extractEpisodeStreams(episode.href, langLabel, slug)
+                        .then(epStreams => streams.push(...epStreams))
+                        .catch(e => console.warn(`[AnimoFlix] Failed to extract ${lang} ep ${targetEp}: ${e.message}`))
+                );
             }
         }
+        await Promise.allSettled(epTasks);
 
         // Update cumulative offset for next part
         const maxRelEp = Math.max(
@@ -382,19 +370,21 @@ async function extractMovieStreams(slug, seasonHref) {
     );
 
     for (const lang of langs) {
-        for (const buildUrl of tryUrlBuilders) {
-            const url = buildUrl(lang);
-            try {
-                const html = await fetchWithRetry(url, { timeout: TIMEOUT });
-                const $ = cheerio.load(html);
-
-                if ($('#lecteurSelect option').length > 0 || html.includes('lecteurSelect')) {
-                    const epStreams = await extractEpisodeStreams(url, lang === 'vf' ? 'VF' : 'VOSTFR', slug);
-                    streams.push(...epStreams);
-                    break;
-                }
-            } catch (e) {
-                continue;
+        const langResults = await Promise.allSettled(
+            tryUrlBuilders.map(buildUrl => {
+                const url = buildUrl(lang);
+                return fetchWithRetry(url, { timeout: TIMEOUT }).then(html => {
+                    if (html.includes('lecteurSelect')) {
+                        return extractEpisodeStreams(url, lang === 'vf' ? 'VF' : 'VOSTFR', slug);
+                    }
+                    throw new Error('No player');
+                });
+            })
+        );
+        for (const r of langResults) {
+            if (r.status === 'fulfilled' && r.value) {
+                streams.push(...r.value);
+                break;
             }
         }
     }
@@ -421,21 +411,17 @@ async function extractEpisodeStreams(episodeUrl, langLabel, slug) {
         }
     }
 
-    const streams = [];
-    for (const url of embedUrls) {
-        try {
-            const stream = await resolveStream({
+    const results = await Promise.allSettled(
+        embedUrls.map(url =>
+            resolveStream({
                 name: `AnimoFlix (${langLabel})`,
                 title: `${langLabel}`,
                 url: url,
                 quality: 'HD',
                 headers: { Referer: `${BASE_URL}/anime/${slug}/` }
-            });
-            if (stream) streams.push(stream);
-        } catch (e) {
-            console.warn(`[AnimoFlix] resolveStream failed for ${url}: ${e.message}`);
-        }
-    }
+            }).then(stream => stream || null)
+        )
+    );
 
-    return streams;
+    return results.filter(r => r.status === 'fulfilled' && r.value).map(r => r.value);
 }

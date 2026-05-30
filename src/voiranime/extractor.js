@@ -292,23 +292,23 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
 
   let matches = [];
   let fallbackMatches = [];
-  // Try titles in order: EN first, then FR
-  for (const title of titles) {
-    const result = await searchAnime(title, effectiveSeason);
-    if (result && result.length > 0) {
-      // Check if any result is explicitly for the requested season or has no season indicator
-      const hasExplicitSeason = result.some(m => {
-        const s = m.url.match(/saison[_-](\d+)/i);
-        return s && parseInt(s[1]) === effectiveSeason;
-      });
-      const hasNoSeason = result.some(m => !m.url.match(/saison[_-]\d+/i));
-      if (hasExplicitSeason || hasNoSeason) {
-        matches = result;
-        break;
-      }
-      // All results are for wrong seasons; save as fallback and continue searching
-      if (!fallbackMatches.length) fallbackMatches = result;
+  // Try all titles in parallel, then check in order (EN first, then FR)
+  const titleResults = await Promise.allSettled(
+    titles.map(title => searchAnime(title, effectiveSeason))
+  );
+  for (const r of titleResults) {
+    if (r.status !== 'fulfilled' || !r.value || r.value.length === 0) continue;
+    const result = r.value;
+    const hasExplicitSeason = result.some(m => {
+      const s = m.url.match(/saison[_-](\d+)/i);
+      return s && parseInt(s[1]) === effectiveSeason;
+    });
+    const hasNoSeason = result.some(m => !m.url.match(/saison[_-]\d+/i));
+    if (hasExplicitSeason || hasNoSeason) {
+      matches = result;
+      break;
     }
+    if (!fallbackMatches.length) fallbackMatches = result;
   }
   if (!matches.length) matches = fallbackMatches;
 

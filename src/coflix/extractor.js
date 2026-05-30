@@ -185,18 +185,22 @@ async function searchFilter(query) {
 }
 
 async function searchAll(titles, mediaType, season) {
-  for (const title of titles.slice(0, 5)) {
-    let results = await searchSuggest(title)
-    if (results.length > 0) {
-      const match = bestResult(results, titles, mediaType, season)
+  const suggestResults = await Promise.allSettled(
+    titles.slice(0, 5).map(title => searchSuggest(title))
+  )
+  for (const r of suggestResults) {
+    if (r.status === 'fulfilled' && r.value.length > 0) {
+      const match = bestResult(r.value, titles, mediaType, season)
       if (match) return match
     }
   }
 
-  for (const title of titles.slice(0, 3)) {
-    let results = await searchFilter(title)
-    if (results.length > 0) {
-      const match = bestResult(results, titles, mediaType, season)
+  const filterResults = await Promise.allSettled(
+    titles.slice(0, 3).map(title => searchFilter(title))
+  )
+  for (const r of filterResults) {
+    if (r.status === 'fulfilled' && r.value.length > 0) {
+      const match = bestResult(r.value, titles, mediaType, season)
       if (match) return match
     }
   }
