@@ -4,16 +4,17 @@
 
 import { fetchText } from './http.js';
 import cheerio from 'cheerio-without-node-native';
-import { resolveStream, withTimeout } from '../utils/resolvers.js';
+import { resolveStream, withTimeout, isBudgetExhausted } from '../utils/resolvers.js';
 import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 
 const BASE_URL = "https://vostfree.ws";
-const MAX_SEARCH_TITLES = 8;
+const MAX_SEARCH_TITLES = 4;
 const MIN_QUERY_LENGTH = 5;
 
 const KNOWN_HOSTS = ['sibnet', 'uqload', 'oneupload', 'sendvid', 'voe', 'dood', 'stape', 'streamtape', 'myvi', 'mytv', 'vidmoly', 'fsvid', 'vidzy'];
-const PLAYER_TIMEOUT_MS = 12000;
+const PLAYER_TIMEOUT_MS = 8000;
+const BUDGET_MS = 45000;
 
 function normalize(s) {
     if (!s) return '';
@@ -107,7 +108,8 @@ async function searchAnime(title) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
-    const titles = await getTmdbTitles(tmdbId, mediaType, { season });
+  const startTime = Date.now();
+  const titles = await getTmdbTitles(tmdbId, mediaType, { season });
     if (titles.length === 0) return [];
 
     const effectiveSeason = titles.effectiveSeason != null ? titles.effectiveSeason : season;
@@ -122,10 +124,10 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
     // --- ARMSYNC Metadata Resolution ---
     let targetEpisodes = episode !== undefined && episode !== null ? [episode] : [];
-    if (mediaType === 'tv' && targetEpisodes.length > 0) {
+    if (mediaType === 'tv' && targetEpisodes.length > 0 && !isBudgetExhausted(startTime, BUDGET_MS)) {
         try {
             const imdbId = await getImdbId(tmdbId, mediaType);
-            if (imdbId) {
+            if (imdbId && !isBudgetExhausted(startTime, BUDGET_MS)) {
                 const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, episode);
                 if (absoluteEpisode && absoluteEpisode !== episode) {
                     targetEpisodes.push(absoluteEpisode);
@@ -205,10 +207,11 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
     const streams = [];
     const checkedUrls = new Set();
-    const MAX_MATCHES_TO_PROCESS = 3;
+    const MAX_MATCHES_TO_PROCESS = 2;
     let processedCount = 0;
 
     for (const match of allMatches) {
+        if (isBudgetExhausted(startTime, BUDGET_MS)) break;
         if (checkedUrls.has(match.url)) continue;
         checkedUrls.add(match.url);
         if (processedCount >= MAX_MATCHES_TO_PROCESS) break;

@@ -1,11 +1,12 @@
 import { fetchText } from './http.js';
 import cheerio from 'cheerio-without-node-native';
-import { resolveStream } from '../utils/resolvers.js';
+import { resolveStream, isBudgetExhausted } from '../utils/resolvers.js';
 import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 
 const BASE_URL = "https://french-anime.com";
 const SPINOFF_KEYWORDS = ['fan letter', 'log:', 'memories', 'vigilante', 'illegals', 'film', 'movie', 'special', 'oav', 'ona'];
+const BUDGET_MS = 45000;
 function normalize(s) {
     return s.toLowerCase()
         .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -124,6 +125,7 @@ function parseEpisodeData(html, targetEpisode) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
+    const startTime = Date.now();
     const titles = await getTmdbTitles(tmdbId, mediaType, { season });
     if (titles.length === 0) return [];
 
@@ -136,10 +138,10 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     });
 
     let targetEpisodes = mediaType === 'movie' ? [-1] : [episode];
-    if (mediaType !== 'movie') {
+    if (mediaType !== 'movie' && !isBudgetExhausted(startTime, BUDGET_MS)) {
         try {
             const imdbId = await getImdbId(tmdbId, mediaType);
-            if (imdbId) {
+            if (imdbId && !isBudgetExhausted(startTime, BUDGET_MS)) {
                 const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, episode);
                 if (absoluteEpisode && absoluteEpisode !== episode) {
                     targetEpisodes.push(absoluteEpisode);
@@ -220,7 +222,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     const streams = [];
     const seenUrls = new Set();
     // Try more pages to find resolvable hosts (some pages use getvid.club which is not resolvable in QuickJS)
-    const MAX_PAGES = 4;
+    const MAX_PAGES = 2;
 
     const uniqueMatches = [];
     const matchUrls = new Set();
@@ -251,7 +253,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         return 6;
     }
 
-    const matchPromises = uniqueMatches.map(async (match) => {
+    const matchPromises = uniqueMatches.slice(0, 2).map(async (match) => {
         try {
             const html = await fetchText(match.url);
 

@@ -1,4 +1,4 @@
-import { safeFetch } from '../utils/resolvers.js'
+import { safeFetch, sanitizeSearchQuery } from '../utils/resolvers.js'
 import { SITE, TIMEOUTS } from './config.js'
 
 export const HEADERS = {
@@ -76,7 +76,8 @@ export async function fetchJson(url, options = {}) {
 }
 
 export async function postSearch(query, options = {}) {
-  const body = `do=search&subaction=search&story=${encodeURIComponent(query)}`
+  const sanitized = sanitizeSearchQuery(query)
+  const body = `do=search&subaction=search&story=${encodeURIComponent(sanitized)}`
   const mergedHeaders = {
     ...HEADERS,
     'Content-Type': 'application/x-www-form-urlencoded',

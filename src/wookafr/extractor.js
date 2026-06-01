@@ -1,6 +1,6 @@
 import { fetchText, postForm } from './http.js'
 import cheerio from 'cheerio-without-node-native'
-import { resolveStream, safeFetch, withTimeout } from '../utils/resolvers.js'
+import { resolveStream, safeFetch, withTimeout, isBudgetExhausted } from '../utils/resolvers.js'
 import { getTmdbTitles } from '../utils/metadata.js'
 import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js'
 import {
@@ -303,6 +303,8 @@ function toStream(name, url, quality, language, subType) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
+  const startTime = Date.now()
+  const BUDGET_MS = 45000
   const titles = await getTmdbTitles(tmdbId, mediaType, { season })
   if (!titles || titles.length === 0) return []
 
@@ -350,16 +352,21 @@ async function extractSeries(tmdbId, mediaType, titles, season, episode, subType
   const targetSeasonNum = parseInt(effectiveSeason) || 1
   let targetEpisodeNums = [parseInt(episode) || 1]
 
-  try {
-    const imdbId = await getImdbId(tmdbId, mediaType)
-    if (imdbId) {
-      const absoluteEp = await getAbsoluteEpisode(imdbId, season, episode)
-      if (absoluteEp && absoluteEp !== parseInt(episode)) {
-        targetEpisodeNums.push(absoluteEp)
+  const startTime = Date.now()
+  const BUDGET_MS = 45000
+
+  if (!isBudgetExhausted(startTime, BUDGET_MS)) {
+    try {
+      const imdbId = await getImdbId(tmdbId, mediaType)
+      if (imdbId && !isBudgetExhausted(startTime, BUDGET_MS)) {
+        const absoluteEp = await getAbsoluteEpisode(imdbId, season, episode)
+        if (absoluteEp && absoluteEp !== parseInt(episode)) {
+          targetEpisodeNums.push(absoluteEp)
+        }
       }
+    } catch (e) {
+      console.warn(`[Wookafr] ArmSync failed: ${e.message}`)
     }
-  } catch (e) {
-    console.warn(`[Wookafr] ArmSync failed: ${e.message}`)
   }
 
   const match = await trySearchSeries(titles)

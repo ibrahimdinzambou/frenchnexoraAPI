@@ -38,7 +38,7 @@ export async function fetchText(url, options = {}) {
         const status = res && typeof res.status === 'number' ? res.status : 'no-response'
         if (attempt < retries && status >= 500) {
           console.warn(`[Flemmix] HTTP ${status} for ${url}, retrying (${attempt + 1}/${retries})...`)
-          await sleep(RETRY_DELAYS[attempt] || 3000)
+          await sleep(RETRY_DELAYS[attempt] || 1500)
           continue
         }
         if (status === 404) return ''
@@ -48,7 +48,7 @@ export async function fetchText(url, options = {}) {
     } catch (e) {
       if (attempt >= retries || (e.message && /HTTP error 4(?:0[0-9]|1[0-79]|29)/.test(e.message))) throw e
       console.warn(`[Flemmix] Attempt ${attempt + 1} failed for ${url}: ${e.message}`)
-      await sleep(RETRY_DELAYS[attempt] || 3000)
+      await sleep(RETRY_DELAYS[attempt] || 1500)
     }
   }
   throw new Error(`Failed to fetch ${url} after ${retries + 1} attempts`)

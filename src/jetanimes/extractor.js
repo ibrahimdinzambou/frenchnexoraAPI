@@ -1,9 +1,10 @@
 import { fetchText } from './http.js';
 import cheerio from 'cheerio-without-node-native';
-import { resolveStream, safeFetch } from '../utils/resolvers.js';
+import { resolveStream, safeFetch, isBudgetExhausted } from '../utils/resolvers.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 
 const BASE_URL = "https://on.jetanimes.com";
+const BUDGET_MS = 40000;
 
 function normalize(s) {
     return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -108,6 +109,7 @@ function getPostId($) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
+    const startTime = Date.now();
     console.log(`[JetAnimes] Request: ${mediaType} ${tmdbId} S${season}E${episode}`);
 
     const titles = await getTmdbTitles(tmdbId, mediaType, { season });
@@ -145,6 +147,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     const isMovie = mediaType === 'movie';
 
     for (const match of matches) {
+        if (isBudgetExhausted(startTime, BUDGET_MS)) break;
         if (isMovie && !match.isMovie) continue;
         if (!isMovie && match.isMovie) continue;
 

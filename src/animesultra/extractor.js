@@ -1,6 +1,6 @@
 import { fetchText } from './http.js';
 import cheerio from 'cheerio-without-node-native';
-import { resolveStream, safeFetch } from '../utils/resolvers.js';
+import { resolveStream, safeFetch, isBudgetExhausted } from '../utils/resolvers.js';
 import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 
@@ -120,6 +120,7 @@ async function searchAnime(title) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
+    const startTime = Date.now();
     const titles = await getTmdbTitles(tmdbId, mediaType, { season });
     if (titles.length === 0) return [];
 
@@ -130,18 +131,21 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         return score(a) - score(b);
     });
 
+    const BUDGET_MS = 45000;
     const epNum = episode || 1;
     let targetEpisodes = [epNum];
-    try {
-        const imdbId = await getImdbId(tmdbId, mediaType);
-        if (imdbId && season) {
-            const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, epNum);
-            if (absoluteEpisode && absoluteEpisode !== epNum) {
-                targetEpisodes.push(absoluteEpisode);
+    if (!isBudgetExhausted(startTime, BUDGET_MS)) {
+        try {
+            const imdbId = await getImdbId(tmdbId, mediaType);
+            if (imdbId && season && !isBudgetExhausted(startTime, BUDGET_MS)) {
+                const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, epNum);
+                if (absoluteEpisode && absoluteEpisode !== epNum) {
+                    targetEpisodes.push(absoluteEpisode);
+                }
             }
+        } catch (e) {
+            console.warn(`[AnimesUltra] ArmSync failed: ${e.message}`);
         }
-    } catch (e) {
-        console.warn(`[AnimesUltra] ArmSync failed: ${e.message}`);
     }
 
     let matches = [];
@@ -187,7 +191,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     await Promise.allSettled(searchPromises);
 
     // If no matches after initial search, try with season number appended
-    if (matches.length === 0 && effectiveSeason) {
+    if (matches.length === 0 && effectiveSeason && !isBudgetExhausted(startTime, BUDGET_MS)) {
         const seasonQuery = titlesOrdered.find(t => t.length > 3);
         if (seasonQuery) {
             await trySearch(`${seasonQuery} Saison ${effectiveSeason}`);
@@ -198,7 +202,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     if (!matches || matches.length === 0) return [];
 
     const spinoffPattern = /(?:\s*:\s*|\s+-\s+)(?!\d|saison|partie|part)/i;
-    if (matches.every(m => spinoffPattern.test(m.title.replace(/ (VF|VOSTFR)$/i, '')))) {
+    if (matches.every(m => spinoffPattern.test(m.title.replace(/ (VF|VOSTFR)$/i, ''))) && !isBudgetExhausted(startTime, BUDGET_MS)) {
         for (const t of titlesOrdered) {
             const k = t.toLowerCase().replace(/[^a-z0-9àâéèêëîïôùûüç]/g, '');
             const key = queryKey(t);
@@ -299,8 +303,9 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     const spinoffCandidates = [];
 
     for (const match of matches) {
+        if (isBudgetExhausted(startTime, BUDGET_MS)) break;
         if (!match.url) continue;
-        if (processedCount >= 6) break;
+        if (processedCount >= 4) break;
 
         if (isSpinoffMatch(match)) {
             spinoffCandidates.push(match);
@@ -355,7 +360,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     }
 
     // Fallback: if no non-spinoff match produced streams, try spinoffs
-    if (streams.length === 0 && spinoffCandidates.length > 0) {
+    if (streams.length === 0 && spinoffCandidates.length > 0 && !isBudgetExhausted(startTime, BUDGET_MS)) {
         for (const match of spinoffCandidates) {
             if (processedCount >= 6) break;
 
@@ -404,7 +409,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         }
     }
 
-    if (streams.length === 0 && effectiveSeason && matches.length > 1) {
+    if (streams.length === 0 && effectiveSeason && matches.length > 1 && !isBudgetExhausted(startTime, BUDGET_MS)) {
         const byPart = {};
         for (const m of matches) {
             const sNum = detectSeason(m.title, m.url);

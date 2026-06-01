@@ -16,6 +16,47 @@ const _atob = (str) => {
 const CODEC_PREFERENCE = ['AV1', 'H.265', 'H.264', 'VP9'];
 
 /**
+ * Sanitize a search query for site search APIs.
+ * Replaces hyphens, apostrophes, and common punctuation that can break
+ * full-text search matching (e.g. TMDB returns "One-Punch Man" but sites
+ * have "One Punch Man").
+ *
+ * @param {string} query - The raw search query
+ * @returns {string} - Sanitized query safe for site search APIs
+ */
+export function sanitizeSearchQuery(query) {
+  return (query || '')
+    .replace(/\s*[-–—]\s*/g, ' ')    // hyphens/dashes to spaces (preserving word boundaries)
+    .replace(/[''`]/g, ' ')           // apostrophes to spaces
+    .replace(/[()\[\]{}:;,!?]/g, ' ') // common punctuation to spaces
+    .replace(/\s+/g, ' ')             // collapse multiple spaces
+    .trim();
+}
+
+/**
+ * TV timeout budget: NuvioTV has 30s OkHttp + 60s plugin total
+ * We use 50s as a safe wall-clock budget to leave headroom.
+ */
+export const TV_BUDGET_MS = 50000;
+
+/**
+ * Check if a budget (wall-clock) has been exceeded.
+ * Providers that import this can bail out early instead of starting
+ * new expensive requests when running on NuvioTV.
+ */
+export function isBudgetExhausted(startTime, budgetMs) {
+    const elapsed = Date.now() - (startTime || 0);
+    return elapsed > (budgetMs || TV_BUDGET_MS);
+}
+
+/**
+ * Returns remaining budget in ms, or 0 if exhausted.
+ */
+export function remainingBudget(startTime, budgetMs) {
+    return Math.max(0, (budgetMs || TV_BUDGET_MS) - (Date.now() - (startTime || 0)));
+}
+
+/**
  * Safely reads a numeric config value from process.env (Node.js)
  * or returns the default (QuickJS where process is undefined).
  */
@@ -68,7 +109,7 @@ function isPlayableMediaUrl(url) {
 }
 
 const STRICT_QUALITY_TIERS = [2160, 1080, 720, 480, 360, 240];
-const DEFAULT_QUALITY_TIER = 360;
+const DEFAULT_QUALITY_TIER = 720;
 
 function nearestQualityTier(height) {
     if (!Number.isFinite(height) || height <= 0) return DEFAULT_QUALITY_TIER;
@@ -549,10 +590,9 @@ export async function resolveSibnet(url) {
 
 export async function resolveVidmoly(url) {
     try {
-        // Reduced from 3 to 2 domains for TV timeout compatibility (30s vs 60s)
+        // Single domain attempt for TV timeout compatibility (30s vs 60s)
         const domains = [
-            url.replace(/vidmoly\.(net|to|ru|is)/, 'vidmoly.me'),
-            url.replace(/vidmoly\.(net|to|ru|is)/, 'vidmoly.biz')
+            url.replace(/vidmoly\.(net|to|ru|is)/, 'vidmoly.me')
         ];
         const uniqueDomains = [...new Set(domains)];
         const headers = { 'Referer': 'https://vidmoly.me/', 'Origin': 'https://vidmoly.me' };
@@ -591,8 +631,8 @@ export async function resolveVidmoly(url) {
 export async function resolveUqload(url) {
     const normalizedPath = url.replace(/^https?:\/\/[^/]+/, '');
     const originalDomain = url.match(/^https?:\/\/([^/]+)/)?.[1] || 'uqload.co';
-    // Reduced from 3 to 2 domains for TV timeout compatibility (30s vs 60s)
-    const uniqueDomains = [...new Set([originalDomain, 'uqload.co'])];
+    // Single domain attempt for TV timeout compatibility (30s vs 60s)
+    const uniqueDomains = [...new Set([originalDomain])];
     const baseRef = `https://${originalDomain}/`;
 
     return new Promise((resolve) => {
@@ -876,7 +916,7 @@ export async function resolveUp4fun(url) {
 }
 
 export async function resolveStream(stream, depth = 0) {
-    if (depth > 2) return { ...stream, isDirect: false }; // Reduced from 3 to 2 for TV timeouts
+    if (depth > 1) return { ...stream, isDirect: false }; // Max 1 recursive peel for TV timeouts
 
     const originalUrl = stream.url;
     const urlLower = originalUrl.toLowerCase();

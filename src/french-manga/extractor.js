@@ -57,7 +57,11 @@ function bestMatch(items, title, targetSeason) {
   let best = null, bestScore = 0
   for (const item of items) {
     let score = scoreMatch(item.title || item.name, title)
-    if (targetSeason) {
+    // Only apply season bonus/penalty if there's already some title similarity
+    // Prevents false positives where a completely unrelated anime matches
+    // just because it happens to have the same season number in its title
+    // (e.g. "Oshi no Ko - Saison 3" matching a search for One Punch Man S3)
+    if (targetSeason && score > 0) {
       const ts = parseInt(targetSeason)
       const rs = item.season
       if (rs === ts) score += 40
@@ -152,14 +156,6 @@ function parseEpisodeApiData(json) {
   return { versions, info, altTitleUs, altTitleJp }
 }
 
-async function trySearchPost(title, targetSeason) {
-  const html = await postSearch(title, { timeout: TIMEOUTS.SEARCH })
-  if (!html) return null
-  const results = parseSearchResults(html)
-  if (results.length === 0) return null
-  return bestMatch(results, title, targetSeason)
-}
-
 async function trySearchGet(title, targetSeason) {
   // GET search always returns the main page listing (latest 36 items, same for any query)
   // Cache it so we only fetch once
@@ -171,12 +167,63 @@ async function trySearchGet(title, targetSeason) {
   return bestMatch(results, title, targetSeason)
 }
 
+async function trySearchFallback(allResults, tmdbTitles) {
+  // Deep fallback: when bestMatch returns null, check low-scoring search results
+  // by fetching their pages in parallel (with short timeout) and verifying
+  // via #serie-config + episode API.
+  const nt = normalize(tmdbTitles[0] || '')
+  if (!nt || allResults.length === 0) return null
+
+  const unique = []
+  const seen = new Set()
+  for (const r of allResults) {
+    if (r.url && !seen.has(r.url)) {
+      seen.add(r.url)
+      unique.push(r)
+    }
+  }
+
+  const results = await Promise.allSettled(
+    unique.slice(0, 5).map(async (result) => {
+      const html = await fetchText(result.url, { timeout: 8000 })
+      const config = parseSerieConfig(html)
+      if (!config || !config.title || !config.newsId) return null
+
+      const nr = normalize(config.title)
+      if (nr === nt || nr.includes(nt) || nt.includes(nr)) {
+        const apiData = await fetchEpisodeApi(config.newsId)
+        if (apiData && apiData.versions) {
+          return {
+            url: config.pageUrl || result.url,
+            newsid: config.newsId,
+            title: config.title,
+          }
+        }
+      }
+      return null
+    })
+  )
+
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value) {
+      console.log(`[FrenchManga] Fallback matched: "${r.value.title}" (newsid: ${r.value.newsid})`)
+      return r.value
+    }
+  }
+  return null
+}
+
 async function trySearch(titles, targetSeason) {
+  const allPostResults = []
   for (const title of titles.slice(0, MAX_SEARCH_TITLES)) {
     try {
       // Try POST search first (actual DLE filtered search — more accurate)
-      const postMatch = await trySearchPost(title, targetSeason)
-      if (postMatch) return postMatch
+      const postResults = await trySearchPostRaw(title, targetSeason)
+      if (postResults) {
+        allPostResults.push(...postResults)
+        const postMatch = bestMatch(postResults, title, targetSeason)
+        if (postMatch) return postMatch
+      }
 
       // Fallback to GET (main page listing — works for recently updated)
       console.log(`[FrenchManga] POST search missed, trying GET for "${title}"...`)
@@ -185,8 +232,21 @@ async function trySearch(titles, targetSeason) {
     } catch (e) {
       console.warn(`[FrenchManga] Search failed for "${title}": ${e.message}`)
     }
+  }    // Deep fallback: check low-scoring POST results via page content (parallel, short timeout)
+  if (allPostResults.length > 0) {
+    console.log(`[FrenchManga] Trying deep fallback on ${allPostResults.length} POST results...`)
+    const fallbackMatch = await trySearchFallback(allPostResults, titles)
+    if (fallbackMatch) return fallbackMatch
   }
+
   return null
+}
+
+async function trySearchPostRaw(title, targetSeason) {
+  const html = await postSearch(title, { timeout: TIMEOUTS.SEARCH })
+  if (!html) return null
+  const results = parseSearchResults(html)
+  return results.length > 0 ? results : null
 }
 
 async function fetchEpisodeApi(newsid) {

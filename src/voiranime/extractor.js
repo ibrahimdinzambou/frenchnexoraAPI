@@ -4,17 +4,17 @@
 
 import { fetchText } from "./http.js";
 import cheerio from "cheerio-without-node-native";
-import { resolveStream } from "../utils/resolvers.js";
+import { resolveStream, isBudgetExhausted, sanitizeSearchQuery } from "../utils/resolvers.js";
 import { getImdbId, getAbsoluteEpisode } from "../utils/armsync.js";
 import { getTmdbTitles } from "../utils/metadata.js";
-const BASE_URL = "https://voir-anime.to";
-const HEAD_TIMEOUT = 8000;
-const PAGE_TIMEOUT = 15000;
-const HOST_TIMEOUT = 12000;
-const SEARCH_TIMEOUT = 20000;
-const GLOBAL_TIMEOUT = 90000;
 
-// Search result cache: avoids re-probing slugs for every episode
+const BASE_URL = "https://voir-anime.to";
+const HEAD_TIMEOUT = 5000;
+const PAGE_TIMEOUT = 10000;
+const HOST_TIMEOUT = 8000;
+const SEARCH_TIMEOUT = 12000;
+const GLOBAL_TIMEOUT = 45000;
+const BUDGET_MS = 40000;
 const SEARCH_CACHE = new Map();
 const SEARCH_CACHE_TTL = 300000; // 5 minutes
 
@@ -32,7 +32,7 @@ function sleep(ms) {
   });
 }
 
-const RETRY_DELAYS = [500, 1000]; // delay (ms) before retry #1 and #2
+const RETRY_DELAYS = [1000, 3000]; // delay (ms) before retry #1 and #2
 
 async function fetchWithRetry(url, options = {}, retries = 2) {
   for (let i = 0; i <= retries; i++) {
@@ -156,22 +156,31 @@ async function searchAnime(title, season = 1) {
   const allSlugs = [...new Set(slugCandidates.filter(Boolean))];
   console.log(`[VoirAnime] Probing slugs (S${season}): ${allSlugs.join(", ")}`);
 
-  const probeResults = await Promise.allSettled(
-    allSlugs.map(async (slug) => {
-      const url = `${BASE_URL}/anime/${slug}/`;
-      await fetchText(url, { method: "HEAD", timeout: HEAD_TIMEOUT });
-      return {
-        title:
-          title +
-          (slug.includes("vostfr")
-            ? " VOSTFR"
-            : slug.includes("vf")
-              ? " VF"
-              : ""),
-        url: url,
-      };
-    })
-  );
+  // Batch HEAD probes to avoid triggering Cloudflare rate-limiting
+  const BATCH_SIZE = 3;
+  const BATCH_DELAY = 200;
+  const probeResults = [];
+  for (let i = 0; i < allSlugs.length; i += BATCH_SIZE) {
+    const batch = allSlugs.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.allSettled(
+      batch.map(async (slug) => {
+        const url = `${BASE_URL}/anime/${slug}/`;
+        await fetchText(url, { method: "HEAD", timeout: HEAD_TIMEOUT });
+        return {
+          title:
+            title +
+            (slug.includes("vostfr")
+              ? " VOSTFR"
+              : slug.includes("vf")
+                ? " VF"
+                : ""),
+          url: url,
+        };
+      })
+    );
+    probeResults.push(...batchResults);
+    if (i + BATCH_SIZE < allSlugs.length) await sleep(BATCH_DELAY);
+  }
 
   const validPredictions = probeResults
     .filter(r => r.status === "fulfilled")
@@ -184,7 +193,7 @@ async function searchAnime(title, season = 1) {
 
   // Fallback: keyword search
   try {
-    const searchUrl = `${BASE_URL}/?post_type=wp-manga&s=${encodeURIComponent(title)}`;
+    const searchUrl = `${BASE_URL}/?post_type=wp-manga&s=${encodeURIComponent(sanitizeSearchQuery(title))}`;
     const html = await fetchText(searchUrl, { timeout: SEARCH_TIMEOUT });
     const $ = cheerio.load(html);
 
@@ -203,7 +212,8 @@ async function searchAnime(title, season = 1) {
     const baseSlugsFromSearch = [
       ...new Set(results.map((r) => extractBaseSlug(r.url)).filter(Boolean)),
     ];
-    const derivedProbes = [];
+    // Build all derived probe URLs
+    const allDerivedSlugs = [];
     for (const bs of baseSlugsFromSearch) {
       const romanSuffix = toRoman(season);
       const seasonSlugs =
@@ -217,15 +227,22 @@ async function searchAnime(title, season = 1) {
               ...(romanSuffix ? [`${bs}-${romanSuffix}`, `${bs}-${romanSuffix}-vostfr`, `${bs}-${romanSuffix}-vf`] : []),
             ];
       for (const sl of seasonSlugs) {
-        const url = `${BASE_URL}/anime/${sl}/`;
-        derivedProbes.push(
-          fetchText(url, { method: "HEAD", timeout: HEAD_TIMEOUT })
-            .then(() => ({ title: title, url: url }))
-            .catch(() => null)
-        );
+        allDerivedSlugs.push(`${BASE_URL}/anime/${sl}/`);
       }
     }
-    const derivedResults = await Promise.allSettled(derivedProbes);
+    // Batch probe derived slugs to avoid triggering Cloudflare
+    const derivedResults = [];
+    for (let i = 0; i < allDerivedSlugs.length; i += BATCH_SIZE) {
+      const batch = allDerivedSlugs.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.allSettled(
+        batch.map(async (url) => {
+          await fetchText(url, { method: "HEAD", timeout: HEAD_TIMEOUT });
+          return { title, url };
+        })
+      );
+      derivedResults.push(...batchResults);
+      if (i + BATCH_SIZE < allDerivedSlugs.length) await sleep(BATCH_DELAY);
+    }
     const firstFound = derivedResults.find(r => r.status === "fulfilled" && r.value);
     if (firstFound) {
       console.log(`[VoirAnime] Derived slug found: ${firstFound.value.url}`);
@@ -291,6 +308,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 }
 
 async function _extractStreams(tmdbId, mediaType, season, episode) {
+  const startTime = Date.now();
   const titles = await getTmdbTitles(tmdbId, mediaType, { season });
   if (titles.length === 0) return [];
 
@@ -298,25 +316,29 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
 
   // --- ARMSYNC Metadata Resolution ---
   let targetEpisodes = [episode || 1];
-  try {
-    const imdbId = await getImdbId(tmdbId, mediaType);
-    if (imdbId) {
-      const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, episode);
-      if (absoluteEpisode && absoluteEpisode !== episode) {
-        targetEpisodes.push(absoluteEpisode);
+  if (!isBudgetExhausted(startTime, BUDGET_MS)) {
+    try {
+      const imdbId = await getImdbId(tmdbId, mediaType);
+      if (imdbId && !isBudgetExhausted(startTime, BUDGET_MS)) {
+        const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, episode);
+        if (absoluteEpisode && absoluteEpisode !== episode) {
+          targetEpisodes.push(absoluteEpisode);
+        }
       }
+    } catch (e) {
+      console.warn(`[VoirAnime] ArmSync failed: ${e.message}`);
     }
-  } catch (e) {
-    console.warn(`[VoirAnime] ArmSync failed: ${e.message}`);
   }
   // ------------------------------------
 
   // Check search cache for this tmdbId + season
   const cacheKey = `${tmdbId}-${effectiveSeason}`;
   const cached = SEARCH_CACHE.get(cacheKey);
+  let matches = [];
+  let fallbackMatches = [];
   if (cached && Date.now() - cached.ts < SEARCH_CACHE_TTL) {
-    matches = cached.matches;
-    fallbackMatches = cached.fallback;
+    matches = cached.matches || [];
+    fallbackMatches = cached.fallback || [];
     console.log(`[VoirAnime] Search cache hit for ${cacheKey} — ${matches.length} matches`);
   } else {
     // Try all titles in parallel, then check in order (EN first, then FR)
@@ -335,9 +357,9 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
         matches = result;
         break;
       }
-      if (!fallbackMatches.length) fallbackMatches = result;
+      if (!fallbackMatches.length && matches.length === 0) fallbackMatches = result;
     }
-    if (!matches.length) matches = fallbackMatches;
+    if (matches.length === 0) matches = fallbackMatches;
 
     if (matches && matches.length > 0) {
       SEARCH_CACHE.set(cacheKey, { ts: Date.now(), matches, fallback: fallbackMatches });
@@ -362,6 +384,8 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
   const checkedUrls = new Set();
 
   for (const match of matches) {
+    if (isBudgetExhausted(startTime, BUDGET_MS)) break;
+
     if (checkedUrls.has(match.url)) continue;
     checkedUrls.add(match.url);
 
@@ -531,7 +555,7 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
 
   // --- FALLBACK: if no direct streams found, retry with season-specific search ---
   const checkedEpisodeUrls = new Set();
-  if (streams.filter(s => s && s.isDirect).length === 0 && matches.length > 0) {
+  if (streams.filter(s => s && s.isDirect).length === 0 && matches.length > 0 && !isBudgetExhausted(startTime, BUDGET_MS)) {
     console.log(`[VoirAnime] No direct streams from initial matches, retrying with season-aware fallback`);
     const seasonStr = effectiveSeason ? String(effectiveSeason) : '';
     for (const match of matches) {

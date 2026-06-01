@@ -4,13 +4,14 @@
 
 import { fetchText } from './http.js';
 import cheerio from 'cheerio-without-node-native';
-import { resolveStream, withTimeout } from '../utils/resolvers.js';
+import { resolveStream, withTimeout, isBudgetExhausted } from '../utils/resolvers.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
 
 const BASE_URL = "https://anime-sama.to";
-const MAX_FALLBACK_TITLES = 3;
-const MAX_FALLBACK_SLUGS = 3;
+const MAX_FALLBACK_TITLES = 2;
+const MAX_FALLBACK_SLUGS = 2;
+const BUDGET_MS = 40000;
 
 /**
  * Search for slugs on Anime-Sama, scored by relevance to the query
@@ -192,6 +193,7 @@ async function tryFetchEpisode(slug, lang, season, episode) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
+    const startTime = Date.now();
     const titles = await getTmdbTitles(tmdbId, mediaType, { season });
     if (titles.length === 0) return [];
 
@@ -199,10 +201,10 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
     // --- ARMSYNC Metadata Resolution ---
     let altEpisodes = [];
-    if (mediaType === 'tv') {
+    if (mediaType === 'tv' && !isBudgetExhausted(startTime, BUDGET_MS)) {
         try {
             const imdbId = await getImdbId(tmdbId, mediaType);
-            if (imdbId) {
+            if (imdbId && !isBudgetExhausted(startTime, BUDGET_MS)) {
                 const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, episode);
                 if (absoluteEpisode && absoluteEpisode !== episode) {
                     altEpisodes.push(absoluteEpisode);
@@ -256,7 +258,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     }
 
     // Multi-title slug fallback: try slugs from ALL titles (incl. JP/FR) before search
-    if (streams.length === 0 && titles.length > 1) {
+    if (streams.length === 0 && titles.length > 1 && !isBudgetExhausted(startTime, BUDGET_MS)) {
         const triedSlugs = new Set([slug]);
         const altSlugTasks = [];
         const seasonSuffixRe = /-(?:saison|season|s)\d+$/i;
@@ -288,7 +290,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         }
     }
 
-    if (streams.length === 0) {
+    if (streams.length === 0 && !isBudgetExhausted(startTime, BUDGET_MS)) {
         const foundSlugs = [];
         for (const t of titles.slice(0, MAX_FALLBACK_TITLES)) {
             const slugs = await searchSlugsScored(t);

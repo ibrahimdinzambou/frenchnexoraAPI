@@ -1,8 +1,10 @@
 import { fetchText } from './http.js';
+import { isBudgetExhausted } from '../utils/resolvers.js';
 import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 
 const BASE_URL = "https://sekai.one";
+const BUDGET_MS = 40000;
 
 
 function normalizeTitle(s) {
@@ -192,16 +194,17 @@ function extractArcsUrls(html, baseUrl) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episodeNum) {
+    const startTime = Date.now();
     const titles = await getTmdbTitles(tmdbId, mediaType, { season });
     if (!titles || titles.length === 0) return [];
     
     const effectiveSeason = titles.effectiveSeason != null ? titles.effectiveSeason : season;
 
     let absEp = mediaType === 'movie' ? 1 : episodeNum;
-    if (mediaType === 'tv') {
+    if (mediaType === 'tv' && !isBudgetExhausted(startTime, BUDGET_MS)) {
         try {
             const imdbId = await getImdbId(tmdbId, mediaType);
-            if (imdbId) {
+            if (imdbId && !isBudgetExhausted(startTime, BUDGET_MS)) {
                 const resolved = await getAbsoluteEpisode(imdbId, season, episodeNum);
                 if (resolved) absEp = resolved;
             }
@@ -259,8 +262,8 @@ export async function extractStreams(tmdbId, mediaType, season, episodeNum) {
          return formatStreams(mainEpMap[absEp]);
     }
 
-    // 3. Otherwise, fetch all related Arcs!
-    let arcsUrls = extractArcsUrls(mainHtml, targetSeries.url);
+    // 3. Otherwise, fetch all related Arcs! (limited to 3 for TV budget)
+    let arcsUrls = extractArcsUrls(mainHtml, targetSeries.url).slice(0, 3);
     console.log(`[Sekai] Found ${arcsUrls.length} arcs. Fetching...`);
     
     // fetch all arcs in parallel to find the episode map
