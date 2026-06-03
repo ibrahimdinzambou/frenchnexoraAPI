@@ -1,6 +1,6 @@
 /**
  * voiranime - Built from src/voiranime/
- * Generated: 2026-06-03T20:32:08.321728251Z
+ * Generated: 2026-06-03T23:09:55.475195388Z
  */
 var __provider = (() => {
   var __create = Object.create;
@@ -13514,9 +13514,10 @@ var __provider = (() => {
               if (href.includes("/special") || href.includes("/oav") || href.includes("/film") || href.includes("/ova")) return;
               const linkSeason = extractSeasonFromEpisodeLink(text, href);
               if (linkSeason !== null && linkSeason !== effectiveSeason) return;
+              const cleanText = text.replace(/S(?:aison|eason)\s*\d+/ig, "").trim();
               for (const pattern of epPatterns) {
                 const regex = new RegExp(`(?:^|[^0-9])${pattern}(?:$|[^0-9])`, "i");
-                if (regex.test(text)) {
+                if (regex.test(cleanText)) {
                   episodeUrl = href;
                   return false;
                 }
@@ -13532,16 +13533,28 @@ var __provider = (() => {
               if (href && !href.includes("/special") && !href.includes("/oav") && !href.includes("/film") && !href.includes("/ova")) {
                 const linkSeason = extractSeasonFromEpisodeLink(text, href);
                 if (linkSeason === null || linkSeason === effectiveSeason) {
-                  chapterLinks.push(href);
+                  chapterLinks.push({ href, text });
                 }
               }
             });
-            chapterLinks.reverse();
             for (const ep of targetEpisodes) {
-              const idx = ep - 1;
-              if (idx >= 0 && idx < chapterLinks.length) {
-                episodeUrl = chapterLinks[idx];
-                break;
+              for (const link of chapterLinks) {
+                const epFromHref = link.href.match(/[-/]0*(\d+)(?:-v(?:ostfr|f))?(?:\/|$)/i);
+                if (epFromHref && parseInt(epFromHref[1], 10) === ep) {
+                  episodeUrl = link.href;
+                  break;
+                }
+              }
+              if (episodeUrl) break;
+            }
+            if (!episodeUrl && chapterLinks.length > 0) {
+              const hrefs = chapterLinks.map((l) => l.href);
+              for (const ep of targetEpisodes) {
+                const idx = ep - 1;
+                if (idx >= 0 && idx < hrefs.length) {
+                  episodeUrl = hrefs[idx];
+                  break;
+                }
               }
             }
           }
