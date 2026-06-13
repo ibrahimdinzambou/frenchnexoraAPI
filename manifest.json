@@ -410,7 +410,7 @@
       "id": "voiranime-rip",
       "name": "VoirAnime.rip",
       "description": "Animes VF et VOSTFR en streaming sur VoirAnime.rip (site DLE).",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "author": "Gowaru",
       "supportedTypes": [
         "movie",

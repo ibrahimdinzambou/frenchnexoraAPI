@@ -33,6 +33,28 @@ function parseSearchResults(html) {
   return results
 }
 
+/**
+ * Detect language from a page URL or content
+ */
+function detectLanguage(html) {
+  const $ = cheerio.load(html)
+
+  // Check title
+  const title = $('title').text().toLowerCase()
+  if (/\bvostfr\b/.test(title)) return 'VOSTFR'
+  if (/\bvf\b/.test(title) && !/\bvostfr\b/.test(title)) return 'VF'
+
+  // Check page content (first 5000 chars)
+  const body = $('body').text().toLowerCase().slice(0, 5000)
+  const hasVostfr = /\bvostfr\b/.test(body)
+  const hasVf = /\bvf\b/.test(body)
+  
+  if (hasVostfr && !hasVf) return 'VOSTFR'
+  if (hasVf && !hasVostfr) return 'VF'
+
+  return null
+}
+
 function parseVideoUrls(html) {
   const urls = []
   if (!html) return urls
@@ -44,7 +66,8 @@ function parseVideoUrls(html) {
     iframeSrc = $('.video-wrapper iframe').first().attr('src')
   }
   if (iframeSrc) {
-    urls.push({ url: iframeSrc, lang: null })
+    const pageLang = detectLanguage(html)
+    urls.push({ url: iframeSrc, lang: pageLang })
   }
 
   // 2. Extract language-specific URLs from JS inline object
@@ -56,6 +79,16 @@ function parseVideoUrls(html) {
     const lang = m[1].toLowerCase() === 'vf' ? 'VF' : 'VOSTFR'
     if (!urls.some(u => u.url === m[2])) {
       urls.push({ url: m[2], lang })
+    }
+  }
+
+  // 3. Fallback: detect page language and apply to any stream still without lang
+  if (urls.some(u => !u.lang)) {
+    const pageLang = detectLanguage(html)
+    if (pageLang) {
+      for (const u of urls) {
+        if (!u.lang) u.lang = pageLang
+      }
     }
   }
 
