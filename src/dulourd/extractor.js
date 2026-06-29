@@ -3,17 +3,7 @@ import { fetchText, fetchApi } from './http.js';
 import { resolveStream, safeFetch, isBudgetExhausted, sortStreamsByLanguage } from '../utils/resolvers.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 import { CONFIG } from './config.js';
-
-function toSlug(title) {
-  return title
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[':!.,?]/g, '')
-    .replace(/[^a-z0-9]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-}
+import { toSlug, normalize, toStream } from '../utils/dle-extractor.js';
 
 function detectSubType(html, genre) {
   const catMatch = html.match(/class="[^"]*category_(anime|cartoon|series|movies)[^"]*"/);
@@ -51,13 +41,11 @@ async function resolveStreamsFromEpisode(episodeId, xfields, subType) {
       const parts = xfield.split('_');
       const lang = CONFIG.LANGUAGE_MAP[parts[1]] || (parts[1] ? parts[1].toUpperCase() : 'VF');
 
-      const stream = await resolveStream({
-        name: `DuLourd (${lang})`,
-        title: `${CONFIG.SERVER_LABELS[parts[0]] || parts[0]} - ${lang}`,
+      const streamDef = toStream(embedUrl, lang, 'DuLourd', CONFIG.BASE_URL, {
         quality: 'HD',
-        url: embedUrl,
-        headers: { Referer: CONFIG.BASE_URL + '/' },
+        title: `[${lang}] ${CONFIG.SERVER_LABELS[parts[0]] || parts[0]}`,
       });
+      const stream = await resolveStream(streamDef);
 
       if (stream && stream.isDirect) {
         if (subType) stream.subType = subType;
@@ -70,16 +58,6 @@ async function resolveStreamsFromEpisode(episodeId, xfields, subType) {
   return results
     .filter(r => r.status === 'fulfilled' && r.value)
     .map(r => r.value);
-}
-
-function normalize(s) {
-  return (s || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function scoreMatch(resultTitle, tmdbTitles) {

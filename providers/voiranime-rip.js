@@ -1,6 +1,6 @@
 /**
  * voiranime-rip - Built from src/voiranime-rip/
- * Generated: 2026-06-24T11:29:53.60959349Z
+ * Generated: 2026-06-29T22:03:36.412616376Z
  */
 var __provider = (() => {
   var __create = Object.create;
@@ -11940,6 +11940,10 @@ var __provider = (() => {
   function sanitizeSearchQuery(query) {
     return (query || "").replace(/[–—]/g, " ").replace(/[''`]/g, "'").replace(/[()\[\]{}:;,!?]/g, " ").replace(/\s+/g, " ").trim();
   }
+  function isBudgetExhausted(startTime, budgetMs) {
+    const elapsed = Date.now() - (startTime || 0);
+    return elapsed > (budgetMs || TV_BUDGET_MS);
+  }
   function safeConfig(key, defaultVal) {
     try {
       if (typeof process !== "undefined" && process.env && process.env[key]) {
@@ -12988,7 +12992,7 @@ var __provider = (() => {
       return __spreadProps(__spreadValues({}, stream), { isDirect: false });
     });
   }
-  var PROVIDER_BUDGET_MS, RETRY_DELAYS, HEADERS, _atob, CODEC_PREFERENCE, STRICT_QUALITY_TIERS, DEFAULT_QUALITY_TIER, CODEC_PRIORITY, manifestCache, MANIFEST_CACHE_TTL, FETCH_CACHE_TTL, fetchCache, KNOWN_HOST_NAMES, peeledUrls, AD_IFRAME_PATTERNS, VIDEO_IFRAME_SCORE, BASE_URL_FORBIDDEN_PATTERN;
+  var PROVIDER_BUDGET_MS, RETRY_DELAYS, HEADERS, USER_AGENT, BASE_HEADERS, _atob, CODEC_PREFERENCE, TV_BUDGET_MS, STRICT_QUALITY_TIERS, DEFAULT_QUALITY_TIER, CODEC_PRIORITY, manifestCache, MANIFEST_CACHE_TTL, FETCH_CACHE_TTL, fetchCache, KNOWN_HOST_NAMES, peeledUrls, AD_IFRAME_PATTERNS, VIDEO_IFRAME_SCORE, BASE_URL_FORBIDDEN_PATTERN;
   var init_resolvers = __esm({
     "src/utils/resolvers.js"() {
       PROVIDER_BUDGET_MS = 45e3;
@@ -12997,6 +13001,8 @@ var __provider = (() => {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
         "Accept-Encoding": "identity"
       };
+      USER_AGENT = HEADERS["User-Agent"];
+      BASE_HEADERS = __spreadValues({}, HEADERS);
       _atob = (str) => {
         try {
           return atob(str);
@@ -13005,6 +13011,7 @@ var __provider = (() => {
         }
       };
       CODEC_PREFERENCE = ["AV1", "H.265", "H.264", "VP9"];
+      TV_BUDGET_MS = 5e4;
       STRICT_QUALITY_TIERS = [2160, 1080, 720, 480, 360, 240];
       DEFAULT_QUALITY_TIER = 720;
       CODEC_PRIORITY = {
@@ -13480,7 +13487,7 @@ var __provider = (() => {
     }
   });
 
-  // src/utils/armsync.js
+  // src/utils/dle-extractor.js
   function syncFetch(_0) {
     return __async(this, arguments, function* (url, options = {}) {
       try {
@@ -13537,16 +13544,6 @@ var __provider = (() => {
       return null;
     });
   }
-  var ARM_API, CINEMATA_API;
-  var init_armsync = __esm({
-    "src/utils/armsync.js"() {
-      init_resolvers();
-      ARM_API = "https://arm.haglund.dev/api/v2";
-      CINEMATA_API = "https://v3-cinemeta.strem.io";
-    }
-  });
-
-  // src/utils/dle-extractor.js
   function stripSeasonSuffix(title) {
     if (!title) return title;
     let cleaned = title.replace(/\s+(?:Season|Saison|Stagione|Temporada)\s+\d+\s*$/i, "").replace(/\s+S\d+\s*$/i, "");
@@ -13610,19 +13607,50 @@ var __provider = (() => {
       }
     });
   }
-  function toStream(url, language, providerName, siteUrl) {
-    return {
+  function toStream(url, language, providerName, siteUrl, opts = {}) {
+    const { quality, subType, title } = opts;
+    const origin = (() => {
+      try {
+        return new URL(url).origin;
+      } catch (e) {
+        return siteUrl;
+      }
+    })();
+    const result = {
       name: `${providerName} (${language})`,
-      title: `[${language}] ${providerName}`,
+      title: title || `[${language}] ${providerName}${quality && quality !== "HD" ? ` [${quality}]` : ""}`,
       url,
-      quality: "HD",
+      quality: quality || "HD",
       language,
       headers: {
-        Referer: `${siteUrl}/`,
-        Origin: siteUrl,
+        Referer: `${origin}/`,
+        Origin: origin,
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
       }
     };
+    if (subType) result.subType = subType;
+    return result;
+  }
+  function resolveTargetEpisodes(_0, _1, _2, _3) {
+    return __async(this, arguments, function* (tmdbId, mediaType, season, episode, opts = {}) {
+      const { startTime, budgetMs = PROVIDER_BUDGET_MS } = opts;
+      const epNum = parseInt(episode) || 1;
+      if (mediaType !== "tv" || !tmdbId || !season) return [epNum];
+      const episodes = [epNum];
+      if (startTime != null && isBudgetExhausted(startTime, budgetMs)) return episodes;
+      try {
+        const imdbId = yield getImdbId(tmdbId, mediaType);
+        if (imdbId && (startTime == null || !isBudgetExhausted(startTime, budgetMs))) {
+          const absoluteEpisode = yield getAbsoluteEpisode(imdbId, season, epNum);
+          if (absoluteEpisode && absoluteEpisode !== epNum) {
+            episodes.push(absoluteEpisode);
+          }
+        }
+      } catch (e) {
+        console.warn(`[ArmSync] Failed: ${e.message}`);
+      }
+      return episodes;
+    });
   }
   function parseAvailableSeasons(html, pattern) {
     if (!html) return [];
@@ -13634,11 +13662,13 @@ var __provider = (() => {
     }
     return [...seasons].sort((a, b) => a - b);
   }
-  var import_cheerio_without_node_native, CACHE;
+  var import_cheerio_without_node_native, ARM_API, CINEMATA_API, CACHE;
   var init_dle_extractor = __esm({
     "src/utils/dle-extractor.js"() {
       import_cheerio_without_node_native = __toESM(require_cheerio_without_node_native());
       init_resolvers();
+      ARM_API = "https://arm.haglund.dev/api/v2";
+      CINEMATA_API = "https://v3-cinemeta.strem.io";
       CACHE = /* @__PURE__ */ new Map();
     }
   });
@@ -13951,15 +13981,8 @@ var __provider = (() => {
     return __async(this, null, function* () {
       const effectiveSeason = titles.effectiveSeason != null ? titles.effectiveSeason : season;
       const targetSeasonNum = parseInt(effectiveSeason) || 1;
-      let absoluteEp = null;
-      try {
-        const imdbId = yield getImdbId(tmdbId, mediaType);
-        if (imdbId) {
-          absoluteEp = yield getAbsoluteEpisode(imdbId, season, episode);
-        }
-      } catch (e) {
-        console.warn(`[VoiranimeRip] ArmSync failed: ${e.message}`);
-      }
+      const targetEpisodeNums = yield resolveTargetEpisodes(tmdbId, mediaType, season, episode);
+      const absoluteEp = targetEpisodeNums.length > 1 ? targetEpisodeNums[1] : null;
       const matches = yield searchAnime(titles);
       if (!matches || matches.length === 0) {
         console.warn(`[VoiranimeRip] Series not found for TMDB ${tmdbId}`);
@@ -13986,7 +14009,7 @@ var __provider = (() => {
           for (const siteSeason of availableSeasons) {
             attempts.push({ match, season: siteSeason, episode: parseInt(episode) || 1 });
           }
-          if (absoluteEp !== null && absoluteEp !== (parseInt(episode) || 1)) {
+          if (absoluteEp !== null && absoluteEp !== targetEpisodeNums[0]) {
             for (const siteSeason of availableSeasons) {
               attempts.push({ match, season: siteSeason, episode: absoluteEp });
             }
@@ -14066,7 +14089,6 @@ var __provider = (() => {
       import_cheerio_without_node_native2 = __toESM(require_cheerio_without_node_native());
       init_http();
       init_metadata();
-      init_armsync();
       init_dle_extractor();
       init_config();
       SEASON_PATTERN = /\/saison-(\d+)\//g;

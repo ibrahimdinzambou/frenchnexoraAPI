@@ -7,7 +7,7 @@ import { fetchText } from './http.js';
 import cheerio from 'cheerio-without-node-native';
 import { resolveStream, withTimeout, isBudgetExhausted, sortStreamsByLanguage } from '../utils/resolvers.js';
 import { getTmdbTitles } from '../utils/metadata.js';
-import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
+import { toSlug, resolveTargetEpisodes } from '../utils/dle-extractor.js';
 
 const BASE_URL = "https://anime-sama.to";
 const MAX_FALLBACK_TITLES = 2;
@@ -68,9 +68,7 @@ function scoreSearchResult(resultTitle, resultSubtitle, query) {
     return score;
 }
 
-function toSlug(title) {
-    return title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-}
+
 
 function getPlayerName(varName, url) {
     if (url.includes('sibnet')) return 'Sibnet';
@@ -202,21 +200,9 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
     const effectiveSeason = titles.effectiveSeason != null ? titles.effectiveSeason : season;
 
-    // --- ARMSYNC Metadata Resolution ---
-    let altEpisodes = [];
-    if (mediaType === 'tv' && !isBudgetExhausted(startTime, BUDGET_MS)) {
-        try {
-            const imdbId = await getImdbId(tmdbId, mediaType);
-            if (imdbId && !isBudgetExhausted(startTime, BUDGET_MS)) {
-                const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, episode);
-                if (absoluteEpisode && absoluteEpisode !== episode) {
-                    altEpisodes.push(absoluteEpisode);
-                }
-            }
-        } catch (e) {
-            console.warn(`[Anime-Sama] ArmSync failed: ${e.message}`);
-        }
-    }
+    // --- ArmSync: resolve absolute episode for TV series ---
+    const episodes = await resolveTargetEpisodes(tmdbId, mediaType, season, episode, { startTime, budgetMs: BUDGET_MS });
+    const altEpisodes = episodes.length > 1 ? [episodes[1]] : [];
     // ------------------------------------
 
     const title = titles[0];

@@ -6,7 +6,7 @@
       "id": "anime-sama",
       "name": "Anime-Sama",
       "description": "Un des plus gros catalogues français, très actif, sorties du jour.",
-      "version": "1.1.48",
+      "version": "1.1.49",
       "author": "Gowaru",
       "supportedTypes": [
         "movie",
@@ -27,169 +27,24 @@
       "supportsExternalPlayer": false
     },
     {
-      "id": "wookafr",
-      "name": "Wookafr",
-      "description": "Films et séries en streaming VF sur Wookafr.",
+      "id": "animesama-co",
+      "name": "AnimeSama.co (DLE Mirror)",
+      "description": "Animes VF et VOSTFR en streaming sur AnimeSama.co (miroir DLE).",
       "version": "1.0.6",
       "author": "Gowaru",
       "supportedTypes": [
         "movie",
         "tv"
       ],
-      "filename": "providers/wookafr.js",
+      "filename": "providers/animesama-co.js",
       "enabled": true,
-      "logo": "https://wookafr.fyi/favicon.ico",
+      "logo": "https://raw.githubusercontent.com/Anime-Sama/IMG/img/autres/logo.png",
       "contentLanguage": [
         "fr"
       ],
       "formats": [
         "mp4",
         "m3u8"
-      ],
-      "limited": false,
-      "disabledPlatforms": [],
-      "supportsExternalPlayer": false
-    },
-    {
-      "id": "flemmix",
-      "name": "Flemmix",
-      "description": "Films et séries en streaming VF/VOSTFR sur Flemmix.",
-      "version": "1.0.6",
-      "author": "Gowaru",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
-      "filename": "providers/flemmix.js",
-      "enabled": true,
-      "logo": "https://flemmix.me/favicon.ico",
-      "contentLanguage": [
-        "fr"
-      ],
-      "formats": [
-        "mp4",
-        "m3u8"
-      ],
-      "limited": false,
-      "disabledPlatforms": [],
-      "supportsExternalPlayer": false
-    },
-    {
-      "id": "voiranime",
-      "name": "VoirAnime",
-      "description": "Un des plus gros catalogues français d'animes.",
-      "version": "1.2.15",
-      "author": "Gowaru",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
-      "filename": "providers/voiranime.js",
-      "enabled": true,
-      "logo": "https://lh3.googleusercontent.com/728eE_dzDC7HWN9Cs2eGkQg4Vlk1CqCJj3T8aAQs50srttRUl6pVmmD0O4t1Zxn4fdiVpPzcoPAzNS2EuUre29Dulw=s60",
-      "contentLanguage": [
-        "fr"
-      ],
-      "formats": [
-        "mp4",
-        "mkv",
-        "m3u8"
-      ],
-      "limited": false,
-      "disabledPlatforms": [],
-      "supportsExternalPlayer": false
-    },
-    {
-      "id": "vostfree",
-      "name": "Vostfree",
-      "description": "Animes VF et VOSTFR en streaming et téléchargement.",
-      "version": "1.1.47",
-      "author": "Gowaru",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
-      "filename": "providers/vostfree.js",
-      "enabled": true,
-      "logo": "https://vostfree.ws/templates/Animix/images/logo.png",
-      "contentLanguage": [
-        "fr"
-      ],
-      "formats": [
-        "mp4",
-        "mkv"
-      ],
-      "limited": false,
-      "disabledPlatforms": [],
-      "supportsExternalPlayer": false
-    },
-    {
-      "id": "animoflix",
-      "name": "AnimoFlix",
-      "description": "Regarder des animes VF et VOSTFR gratuitement sur AnimoFlix.",
-      "version": "1.0.10",
-      "author": "Gowaru",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
-      "filename": "providers/animoflix.js",
-      "enabled": true,
-      "logo": "https://animoflix.to/img/logo.png",
-      "contentLanguage": [
-        "fr"
-      ],
-      "formats": [
-        "mp4",
-        "mkv"
-      ],
-      "limited": false,
-      "disabledPlatforms": [],
-      "supportsExternalPlayer": false
-    },
-    {
-      "id": "french-anime",
-      "name": "French-Anime",
-      "description": "Animes VF et VOSTFR en streaming gratuit sur French Anime.",
-      "version": "1.1.46",
-      "author": "Gowaru",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
-      "filename": "providers/french-anime.js",
-      "enabled": true,
-      "logo": "https://french-anime.com/templates/franime/images/favicon3.png",
-      "contentLanguage": [
-        "fr"
-      ],
-      "formats": [
-        "mp4",
-        "mkv"
-      ],
-      "limited": false,
-      "disabledPlatforms": [],
-      "supportsExternalPlayer": false
-    },
-    {
-      "id": "animevostfr",
-      "name": "AnimeVOSTFR",
-      "description": "Animes VF et VOSTFR en streaming gratuit sur AnimeVOSTFR.",
-      "version": "1.1.44",
-      "author": "Gowaru",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
-      "filename": "providers/animevostfr.js",
-      "enabled": true,
-      "logo": "https://animevostfr.org/wp-content/uploads/luffy-icon.jpg",
-      "contentLanguage": [
-        "fr"
-      ],
-      "formats": [
-        "mp4",
-        "mkv"
       ],
       "limited": false,
       "disabledPlatforms": [],
@@ -199,7 +54,7 @@
       "id": "animesultra",
       "name": "AnimesUltra",
       "description": "Animes en streaming VOSTFR et VF.",
-      "version": "1.0.30",
+      "version": "1.0.31",
       "author": "Gowaru",
       "supportedTypes": [
         "movie",
@@ -220,18 +75,18 @@
       "supportsExternalPlayer": false
     },
     {
-      "id": "jetanimes",
-      "name": "JetAnimes",
-      "description": "Regarder vos animes en streaming sur JetAnimes.",
-      "version": "1.0.22",
+      "id": "animevostfr",
+      "name": "AnimeVOSTFR",
+      "description": "Animes VF et VOSTFR en streaming gratuit sur AnimeVOSTFR.",
+      "version": "1.1.45",
       "author": "Gowaru",
       "supportedTypes": [
         "movie",
         "tv"
       ],
-      "filename": "providers/jetanimes.js",
+      "filename": "providers/animevostfr.js",
       "enabled": true,
-      "logo": "https://vww.jetanimes.com/wp-content/uploads/2018/12/android-chrome-192x192.png",
+      "logo": "https://animevostfr.org/wp-content/uploads/luffy-icon.jpg",
       "contentLanguage": [
         "fr"
       ],
@@ -244,18 +99,18 @@
       "supportsExternalPlayer": false
     },
     {
-      "id": "sekai",
-      "name": "Sekai",
-      "description": "Fournisseur spécialisé sur les gros animes. Streams directs très rapides sans iFrames.",
-      "version": "1.0.18",
+      "id": "animoflix",
+      "name": "AnimoFlix",
+      "description": "Regarder des animes VF et VOSTFR gratuitement sur AnimoFlix.",
+      "version": "1.0.11",
       "author": "Gowaru",
       "supportedTypes": [
         "movie",
         "tv"
       ],
-      "filename": "providers/sekai.js",
+      "filename": "providers/animoflix.js",
       "enabled": true,
-      "logo": "https://sekai.one/favicon.ico",
+      "logo": "https://animoflix.to/img/logo.png",
       "contentLanguage": [
         "fr"
       ],
@@ -267,11 +122,133 @@
       "disabledPlatforms": [],
       "supportsExternalPlayer": false
     },
+    {
+      "id": "coflix",
+      "name": "Coflix",
+      "description": "Films et séries en streaming VF/VOSTFR sur Coflix.wiki.",
+      "version": "1.0.6",
+      "author": "Gowaru",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/coflix.js",
+      "enabled": true,
+      "logo": "https://coflix.wiki/images/favicon-coflix.png",
+      "contentLanguage": [
+        "fr"
+      ],
+      "formats": [
+        "mp4",
+        "m3u8"
+      ],
+      "limited": false,
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": false
+    },
+    {
+      "id": "dulourd",
+      "name": "DuLourd",
+      "description": "Séries, animes et cartoons en streaming VF et VOSTFR.",
+      "version": "1.0.10",
+      "author": "Gowaru",
+      "supportedTypes": [
+        "tv"
+      ],
+      "filename": "providers/dulourd.js",
+      "enabled": true,
+      "logo": "https://www.dulourd.hair/templates/dulourd2/icon/favicon.png",
+      "contentLanguage": [
+        "fr"
+      ],
+      "formats": [
+        "mp4",
+        "m3u8"
+      ],
+      "limited": false,
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": false
+    },
+    {
+      "id": "flemmix",
+      "name": "Flemmix",
+      "description": "Films et séries en streaming VF/VOSTFR sur Flemmix.",
+      "version": "1.0.7",
+      "author": "Gowaru",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/flemmix.js",
+      "enabled": true,
+      "logo": "https://flemmix.me/favicon.ico",
+      "contentLanguage": [
+        "fr"
+      ],
+      "formats": [
+        "mp4",
+        "m3u8"
+      ],
+      "limited": false,
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": false
+    },
+
+    {
+      "id": "french-manga",
+      "name": "French-Manga",
+      "description": "Animes VF et VOSTFR en streaming sur French-Manga.net",
+      "version": "1.0.6",
+      "author": "Gowaru",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/french-manga.js",
+      "enabled": true,
+      "logo": "https://w16.french-manga.net/favicon.ico",
+      "contentLanguage": [
+        "fr"
+      ],
+      "formats": [
+        "mp4",
+        "m3u8"
+      ],
+      "limited": false,
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": false
+    },
+    {
+      "id": "frenchstream",
+      "name": "Frenchstream",
+      "description": "Films, séries et animes en VF et VOSTFR (séries site-native, films par catégories).",
+      "version": "2.0.11",
+      "author": "Gowaru",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/frenchstream.js",
+      "enabled": true,
+      "logo": "https://french-stream.one/favicon.ico",
+      "contentLanguage": [
+        "fr"
+      ],
+      "formats": [
+        "mp4",
+        "mkv",
+        "m3u8"
+      ],
+      "limited": false,
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": true
+    },
+
     {
       "id": "movix",
       "name": "Movix",
       "description": "Films, Séries et Animes en VF et VOSTFR.",
-      "version": "1.0.33",
+      "version": "1.0.34",
       "author": "Gowaru",
       "supportedTypes": [
         "movie",
@@ -296,7 +273,7 @@
       "id": "mugiwarastream",
       "name": "Mugiwara-no-Streaming",
       "description": "Streaming gratuit d'animes et scans en bonne qualite via API Next.js.",
-      "version": "1.0.10",
+      "version": "1.0.11",
       "author": "Gowaru",
       "supportedTypes": [
         "movie",
@@ -318,18 +295,42 @@
       "supportsExternalPlayer": false
     },
     {
-      "id": "frenchstream",
-      "name": "Frenchstream",
-      "description": "Films, séries et animes en VF et VOSTFR (séries site-native, films par catégories).",
-      "version": "2.0.10",
+      "id": "sekai",
+      "name": "Sekai",
+      "description": "Fournisseur spécialisé sur les gros animes. Streams directs très rapides sans iFrames.",
+      "version": "1.0.19",
       "author": "Gowaru",
       "supportedTypes": [
         "movie",
         "tv"
       ],
-      "filename": "providers/frenchstream.js",
+      "filename": "providers/sekai.js",
       "enabled": true,
-      "logo": "https://french-stream.one/favicon.ico",
+      "logo": "https://sekai.one/favicon.ico",
+      "contentLanguage": [
+        "fr"
+      ],
+      "formats": [
+        "mp4",
+        "mkv"
+      ],
+      "limited": false,
+      "disabledPlatforms": [],
+      "supportsExternalPlayer": false
+    },
+    {
+      "id": "voiranime",
+      "name": "VoirAnime",
+      "description": "Un des plus gros catalogues français d'animes.",
+      "version": "1.2.16",
+      "author": "Gowaru",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/voiranime.js",
+      "enabled": true,
+      "logo": "https://lh3.googleusercontent.com/728eE_dzDC7HWN9Cs2eGkQg4Vlk1CqCJj3T8aAQs50srttRUl6pVmmD0O4t1Zxn4fdiVpPzcoPAzNS2EuUre29Dulw=s60",
       "contentLanguage": [
         "fr"
       ],
@@ -340,77 +341,13 @@
       ],
       "limited": false,
       "disabledPlatforms": [],
-      "supportsExternalPlayer": true
-    },
-    {
-      "id": "dulourd",
-      "name": "DuLourd",
-      "description": "Séries, animes et cartoons en streaming VF et VOSTFR.",
-      "version": "1.0.9",
-      "author": "Gowaru",
-      "supportedTypes": ["tv"],
-      "filename": "providers/dulourd.js",
-      "enabled": true,
-      "logo": "https://www.dulourd.hair/templates/dulourd2/icon/favicon.png",
-      "contentLanguage": ["fr"],
-      "formats": ["mp4", "m3u8"],
-      "limited": false,
-      "disabledPlatforms": [],
-      "supportsExternalPlayer": false
-    },
-    {
-      "id": "coflix",
-      "name": "Coflix",
-      "description": "Films et séries en streaming VF/VOSTFR sur Coflix.wiki.",
-      "version": "1.0.5",
-      "author": "Gowaru",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
-      "filename": "providers/coflix.js",
-      "enabled": true,
-      "logo": "https://coflix.wiki/images/favicon-coflix.png",
-      "contentLanguage": [
-        "fr"
-      ],
-      "formats": [
-        "mp4",
-        "m3u8"
-      ],
-      "limited": false,
-      "disabledPlatforms": [],
-      "supportsExternalPlayer": false
-    },
-    {
-      "id": "animesama-co",
-      "name": "AnimeSama.co (DLE Mirror)",
-      "description": "Animes VF et VOSTFR en streaming sur AnimeSama.co (miroir DLE).",
-      "version": "1.0.5",
-      "author": "Gowaru",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
-      "filename": "providers/animesama-co.js",
-      "enabled": true,
-      "logo": "https://raw.githubusercontent.com/Anime-Sama/IMG/img/autres/logo.png",
-      "contentLanguage": [
-        "fr"
-      ],
-      "formats": [
-        "mp4",
-        "m3u8"
-      ],
-      "limited": false,
-      "disabledPlatforms": [],
       "supportsExternalPlayer": false
     },
     {
       "id": "voiranime-rip",
       "name": "VoirAnime.rip",
       "description": "Animes VF et VOSTFR en streaming sur VoirAnime.rip (site DLE).",
-      "version": "1.0.7",
+      "version": "1.0.8",
       "author": "Gowaru",
       "supportedTypes": [
         "movie",
@@ -431,41 +368,42 @@
       "supportsExternalPlayer": false
     },
     {
-      "id": "otakufr",
-      "name": "Otakufr",
-      "description": "Animes VF et VOSTFR en streaming sur Otakufr (WordPress).",
-      "version": "1.0.1",
+      "id": "vostfree",
+      "name": "Vostfree",
+      "description": "Animes VF et VOSTFR en streaming et téléchargement.",
+      "version": "1.1.48",
       "author": "Gowaru",
       "supportedTypes": [
+        "movie",
         "tv"
       ],
-      "filename": "providers/otakufr.js",
+      "filename": "providers/vostfree.js",
       "enabled": true,
-      "logo": "https://otakufr.beer/imghd/otakufr-icon.png",
+      "logo": "https://vostfree.ws/templates/Animix/images/logo.png",
       "contentLanguage": [
         "fr"
       ],
       "formats": [
         "mp4",
-        "m3u8"
+        "mkv"
       ],
       "limited": false,
       "disabledPlatforms": [],
       "supportsExternalPlayer": false
     },
     {
-      "id": "french-manga",
-      "name": "French-Manga",
-      "description": "Animes VF et VOSTFR en streaming sur French-Manga.net",
-      "version": "1.0.5",
+      "id": "wookafr",
+      "name": "Wookafr",
+      "description": "Films et séries en streaming VF sur Wookafr.",
+      "version": "1.0.7",
       "author": "Gowaru",
       "supportedTypes": [
         "movie",
         "tv"
       ],
-      "filename": "providers/french-manga.js",
+      "filename": "providers/wookafr.js",
       "enabled": true,
-      "logo": "https://w16.french-manga.net/favicon.ico",
+      "logo": "https://wookafr.fyi/favicon.ico",
       "contentLanguage": [
         "fr"
       ],

@@ -1,21 +1,13 @@
-import { stripSeasonSuffix } from '../utils/dle-extractor.js';
+import { stripSeasonSuffix, normalize, resolveTargetEpisodes, toStream } from '../utils/dle-extractor.js';
 import { fetchText } from './http.js';
 import cheerio from 'cheerio-without-node-native';
 import { resolveStream, safeFetch, isBudgetExhausted, sortStreamsByLanguage } from '../utils/resolvers.js';
-import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 
 const BASE_URL = "https://ww.animesultra.org";
 
 const searchCache = {};
 const CACHE_TTL = 60000;
-
-function normalize(s) {
-    return s.toLowerCase()
-        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-        .replace(/[':!.,?()\/–—]/g, '')
-        .replace(/\s+/g, ' ').trim();
-}
 
 function scoreSearchMatch(resultTitle, searchTitle) {
     const nResult = normalize(resultTitle.replace(/ (VF|VOSTFR)$/i, ''));
@@ -134,20 +126,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
     const BUDGET_MS = 45000;
     const epNum = episode || 1;
-    let targetEpisodes = [epNum];
-    if (!isBudgetExhausted(startTime, BUDGET_MS)) {
-        try {
-            const imdbId = await getImdbId(tmdbId, mediaType);
-            if (imdbId && season && !isBudgetExhausted(startTime, BUDGET_MS)) {
-                const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, epNum);
-                if (absoluteEpisode && absoluteEpisode !== epNum) {
-                    targetEpisodes.push(absoluteEpisode);
-                }
-            }
-        } catch (e) {
-            console.warn(`[AnimesUltra] ArmSync failed: ${e.message}`);
-        }
-    }
+    const targetEpisodes = await resolveTargetEpisodes(tmdbId, mediaType, season, epNum, { startTime, budgetMs: BUDGET_MS })
 
     let matches = [];
     const seenIds = new Set();
@@ -269,17 +248,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         if (!url || seenStreamUrls.has(dedupKey)) return;
         seenStreamUrls.add(dedupKey);
         if (/^[0-9]+$/.test(url)) url = `https://video.sibnet.ru/shell.php?videoid=${url}`;
-        streams.push({
-            name: `AnimesUltra (${lang})`,
-            title: `${serverName} - ${lang}`,
-            url,
-            quality: "HD",
-            headers: {
-                "Referer": BASE_URL + '/',
-                "Origin": BASE_URL,
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
-        });
+        streams.push(toStream(url, lang, 'AnimesUltra', BASE_URL, { title: `[${lang}] ${serverName}` }));
     };
 
     const fetchEpisodeServers = async (epHref, $context, lang) => {

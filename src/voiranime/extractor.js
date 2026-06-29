@@ -6,7 +6,7 @@
 import { fetchText } from "./http.js";
 import cheerio from "cheerio-without-node-native";
 import { resolveStream, isBudgetExhausted, sanitizeSearchQuery, sortStreamsByLanguage, sleep, fetchWithRetry } from "../utils/resolvers.js";
-import { getImdbId, getAbsoluteEpisode } from "../utils/armsync.js";
+import { toSlug, resolveTargetEpisodes } from '../utils/dle-extractor.js';
 import { getTmdbTitles } from "../utils/metadata.js";
 
 const BASE_URL = "https://voir-anime.to";
@@ -25,16 +25,7 @@ const KNOWN_HOSTS = ['myTV', 'Stape', 'Streamtape', 'Uqload', 'Vidzy', 'fsvid', 
 
 const SPINOFF_KEYWORDS = ['fan letter', 'log:', 'memories', 'vigilante', 'illegals', 'film', 'movie', 'special', 'oav', 'ona', 'x ut', 'collab'];
 
-function toSlug(title) {
-  return title
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[':!.,?]/g, "")
-    .replace(/[^a-z0-9]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
+
 
 function isSpinoff(title) {
   const t = title.toLowerCase();
@@ -536,20 +527,10 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
   // Vider le cache de slug probing pour une nouvelle exécution
   slugProbeCache.clear();
 
-  // ArmSync: try to get absolute episode
-  let targetEpisodes = [episode || 1];
-  if (!isBudgetExhausted(startTime, BUDGET_MS)) {
-    try {
-      const imdbId = await getImdbId(tmdbId, mediaType);
-      if (imdbId && !isBudgetExhausted(startTime, BUDGET_MS)) {
-        const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, episode);
-        if (absoluteEpisode && absoluteEpisode !== episode) {
-          targetEpisodes = [absoluteEpisode];
-        }
-      }
-    } catch (e) {
-      console.warn(`[VoirAnime] ArmSync failed: ${e.message}`);
-    }
+  // ArmSync: resolve absolute episode (VoirAnime replaces, not pushes)
+  const resolvedEps = await resolveTargetEpisodes(tmdbId, mediaType, season, episode, { startTime, budgetMs: BUDGET_MS });
+  if (resolvedEps.length > 1) {
+    targetEpisodes = [resolvedEps[1]]; // Replace with absolute only
   }
 
   // Search cache

@@ -1,5 +1,6 @@
 import { fetchJson } from './http.js';
 import { resolveStream, withTimeout } from '../utils/resolvers.js';
+import { getUrlOrigin, normalizeLangTag } from '../utils/dle-extractor.js';
 
 const API_BASE = 'https://api.movix.cloud';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
@@ -8,19 +9,6 @@ const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 const SLOW_HOSTS = ['up4fun', 'dood', 'doodstream', 'moonplayer', 'filemoon', 'streamtape', 'stape'];
 // Hosts rapides prioritaires (résolution fiable en < 3s)
 const FAST_HOSTS = ['voe', 'uqload', 'fsvid', 'vidzy', 'netu', 'younetu', 'sendvid', 'sibnet'];
-
-function originFromUrl(url) {
-    try { return new URL(url).origin; }
-    catch (e) { return 'https://movix.cash'; }
-}
-
-function normalizeLangTag(lang) {
-    const l = (lang || '').toLowerCase();
-    if (l === 'vff' || l === 'vfq' || l === 'vf' || l.includes('french')) return 'VF';
-    if (l === 'vostfr' || l === 'vost' || l.includes('vostfr')) return 'VOSTFR';
-    if (l === 'default' || l === 'multi') return 'MULTI';
-    return (lang || 'VF').toUpperCase();
-}
 
 /** Score de priorité d'un stream : plus bas = résolu en premier */
 function streamPriority(url, language) {
@@ -46,13 +34,13 @@ function streamPriority(url, language) {
 
 function pushStream(streams, provider, server, lang, url, quality) {
     if (!url || typeof url !== 'string') return;
-    const origin = originFromUrl(url);
+    const origin = getUrlOrigin(url, 'https://movix.cash');
     streams.push({
         name: 'Movix',
         title: `[${normalizeLangTag(lang)}] ${provider} - ${server || 'Player'}`,
         url,
         quality: quality || 'HD',
-        language: normalizeLangTag(lang),  // stocké pour le tri
+        language: normalizeLangTag(lang),
         headers: { Referer: origin + '/', Origin: origin, 'User-Agent': USER_AGENT }
     });
 }

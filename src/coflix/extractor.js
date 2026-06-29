@@ -4,7 +4,7 @@
  * Uses iframe embed from lecteurvideo.com for streaming
  */
 
-import { stripSeasonSuffix } from '../utils/dle-extractor.js'
+import { stripSeasonSuffix, toStream } from '../utils/dle-extractor.js'
 import { fetchText } from './http.js'
 import { resolveStream } from '../utils/resolvers.js'
 import { getTmdbTitles } from '../utils/metadata.js'
@@ -167,21 +167,6 @@ async function probeEpisode(slug, season, episode) {
   })
 }
 
-function toStream(embedUrl, language) {
-  return {
-    name: 'Coflix',
-    title: `[${language}] Coflix`,
-    url: embedUrl,
-    quality: 'HD',
-    language,
-    headers: {
-      Referer: `${BASE_URL}/`,
-      Origin: BASE_URL,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    },
-  }
-}
-
 export async function extractStreams(tmdbId, mediaType, season, episode) {
   const titles = await getTmdbTitles(tmdbId, mediaType, { season })
   if (!titles || titles.length === 0) return []
@@ -196,7 +181,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
       const slug = toSlug(title)
       const result = await probeMovie(slug)
       if (result) {
-        const stream = toStream(result.url, result.lang)
+        const stream = toStream(result.url, result.lang, 'Coflix', BASE_URL)
         const resolved = await resolveStream(stream)
         if (resolved && resolved.url) return [{ ...resolved, provider: 'coflix' }]
         return [{ ...stream, provider: 'coflix', type: 'embed' }]
@@ -212,7 +197,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     for (const slug of candidates) {
       const result = await probeEpisode(slug, targetSeason, targetEpisode)
       if (result) {
-        const stream = toStream(result.url, result.lang)
+        const stream = toStream(result.url, result.lang, 'Coflix', BASE_URL)
         const resolved = await resolveStream(stream)
         if (resolved && resolved.url) return [{ ...resolved, provider: 'coflix' }]
         return [{ ...stream, provider: 'coflix', type: 'embed' }]

@@ -3,11 +3,10 @@
  * Site: animevostfr.org (WordPress + ToroPlay theme)
  */
 
-import { stripSeasonSuffix } from '../utils/dle-extractor.js';
+import { stripSeasonSuffix, resolveTargetEpisodes } from '../utils/dle-extractor.js';
 import { fetchText } from './http.js';
 import cheerio from 'cheerio-without-node-native';
 import { resolveStream, sortStreamsByLanguage } from '../utils/resolvers.js';
-import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 
 const BASE_URL = "https://v2.animevostfr.org";
@@ -379,20 +378,8 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         ...titles.filter(t => !isFrenchTitle(t))
     ];
 
-    // --- ARMSYNC Metadata Resolution ---
-    let targetEpisodes = [episode];
-    try {
-        const imdbId = await getImdbId(tmdbId, mediaType);
-        if (imdbId) {
-            const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, episode);
-            if (absoluteEpisode && absoluteEpisode !== episode) {
-                targetEpisodes.push(absoluteEpisode);
-            }
-        }
-    } catch (e) {
-        console.warn(`[AnimeVOSTFR] ArmSync failed: ${e.message}`);
-    }
-    // ------------------------------------
+    // --- ArmSync: resolve absolute episode for TV series ---
+    const targetEpisodes = await resolveTargetEpisodes(tmdbId, mediaType, season, episode);
 
     // For movies, use season=1, episode=1 to search episode pages
     const searchSeason = (mediaType === 'movie' && season == null) ? 1 : effectiveSeason;
@@ -510,6 +497,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
                     } else {
                         s.title = `${s.title}${epType}`;
                     }
+                    s.language = langSuffix;
                 });
                 matchStreams.push(...playerStreams);
             }

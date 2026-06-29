@@ -1,8 +1,7 @@
-import { stripSeasonSuffix } from '../utils/dle-extractor.js';
+import { stripSeasonSuffix, toStream, resolveTargetEpisodes } from '../utils/dle-extractor.js';
 import cheerio from 'cheerio-without-node-native';
 import { safeFetch, resolveStream, isBudgetExhausted } from '../utils/resolvers.js';
 import { getTmdbTitles } from '../utils/metadata.js';
-import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
 import { fetchText, fetchJson, BASE_URL, BASE_URLS } from './http.js';
 
 const MIN_MATCH_SCORE = 60;
@@ -250,15 +249,13 @@ function languageLabel(k) {
     return l ? l.toUpperCase() : 'VF';
 }
 
-function toStream(name, host, language, url, quality, subType) {
+function makeStream(name, host, language, url, quality, subType) {
+    const lang = languageLabel(language);
     const origin = getOrigin(url);
-    const s = {
-        name, url, quality: quality || 'HD',
-        title: '[' + languageLabel(language) + '] ' + hostLabel(host) + (quality && quality !== 'HD' ? ' [' + quality + ']' : ''),
-        headers: { Referer: origin + '/', Origin: origin, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' }
-    };
-    if (subType) s.subType = subType;
-    return s;
+    const opts = { quality: quality || 'HD', subType };
+    // Frenchstream utilise le nom de l'hôte (FSVID, UQLOAD, etc.) dans le titre
+    opts.title = '[' + lang + '] ' + hostLabel(host) + (quality && quality !== 'HD' ? ' [' + quality + ']' : '');
+    return toStream(url, lang, name, origin, opts);
 }
 
 function dedupeByUrl(streams) {
@@ -298,7 +295,7 @@ function collectTvSiteCandidates(epData, episode, subType) {
         for (const host of Object.keys(players)) {
             const url = players[host];
             if (typeof url === 'string' && url.startsWith('http')) {
-                streams.push(toStream('Frenchstream', host, lang, url, null, subType));
+                streams.push(makeStream('Frenchstream', host, lang, url, null, subType));
             }
         }
     }
@@ -373,7 +370,7 @@ async function verifyAndExtractMovieStreams(newsId, tmdbId, subType) {
             for (const lang of Object.keys(versions)) {
                 const url = versions[lang];
                 if (typeof url === 'string' && url.startsWith('http')) {
-                    streams.push(toStream('Frenchstream', host, lang, url, null, subType));
+                    streams.push(makeStream('Frenchstream', host, lang, url, null, subType));
                 }
             }
         }
@@ -532,19 +529,8 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     if (isBudgetExhausted(startTime, BUDGET_MS)) return [];
 
     if (mediaType === 'tv') {
-        // --- ARMSYNC Metadata Resolution ---
-        let targetEpisodes = [episode];
-        try {
-            const imdbId = await getImdbId(tmdbId, mediaType);
-            if (imdbId) {
-                const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, episode);
-                if (absoluteEpisode && absoluteEpisode !== episode) {
-                    targetEpisodes.push(absoluteEpisode);
-                }
-            }
-        } catch (e) {
-            console.warn(`[Frenchstream] ArmSync failed: ${e.message}`);
-        }
+        // --- ArmSync: resolve absolute episode for TV series ---
+        const targetEpisodes = await resolveTargetEpisodes(tmdbId, mediaType, season, episode);
         // ------------------------------------
 
         let seasons = [];

@@ -32,9 +32,7 @@ This bundle integrates 19 pillars of the French streaming scene:
 | **AnimesUltra** | Complete catalog based on DataLife Engine. | VF / VOSTFR | ✅ |
 | **VoirAnime** | Comprehensive historical archive. | VF / VOSTFR | ✅ |
 | **Vostfree** | Specialist in streaming & downloads. | VF / VOSTFR | ✅ |
-| **French-Anime** | Large choice of alternative servers. | VF / VOSTFR | ✅ |
 | **AnimeVOSTFR** | High-quality alternative source (fixed VF/VOSTFR detection). | VF / VOSTFR | ✅ |
-| **JetAnimes** | Dooplay-based alternative tracker. | VF / VOSTFR | ⚠️ |
 | **Movix** | Movies and TV series in French and with French subtitles. | VF / VOSTFR | ✅ |
 | **Mugiwara-no-Streaming** | Anime streaming via Next.js API with Sibnet, Vidmoly, Sendvid, VK sources. | VF / VOSTFR | ✅ |
 | **Frenchstream** | French movies and series with direct HLS resolution on supported hosts. | VF / VOSTFR | ✅ |
@@ -47,7 +45,6 @@ This bundle integrates 19 pillars of the French streaming scene:
 | **AnimeSama.co (DLE)** | DLE mirror of Anime-Sama with Sibnet direct iframes. | VF / VOSTFR | ✅ |
 | **VoirAnime.rip** | Alternative domain of VoirAnime (server-rendered, Sibnet). | VF / VOSTFR | ✅ |
 
-*(Note: JetAnimes is currently marked with a warning as it heavily utilizes gatekeeping link redirectors like secured.lol)*
 
 **⚠️ Provider Status Legend:**
 - ✅ = Fully functional
