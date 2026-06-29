@@ -1,22 +1,15 @@
 import { fetchText, postForm } from './http.js'
 import cheerio from 'cheerio-without-node-native'
-import { resolveStream, safeFetch, withTimeout, isBudgetExhausted } from '../utils/resolvers.js'
+import { resolveStream, safeFetch, withTimeout } from '../utils/resolvers.js'
 import { getTmdbTitles } from '../utils/metadata.js'
-import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js'
+import { toStream, toSlug, normalize, resolveTargetEpisodes } from '../utils/dle-extractor.js'
 import {
   SITE, ENDPOINTS, SELECTORS, PATTERNS, TIMEOUTS, SCORES,
   LANGUAGE_MAP, ANIME_GENRE_ID, ANIME_KEYWORDS,
   CACHE_TTL, MAX_CANDIDATES, MAX_SEARCH_TITLES,
 } from './config.js'
 
-function normalize(s) {
-  return (s || '')
-    .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[':!.,?()[\]]/g, ' ')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ').trim()
-}
+
 
 function isJapanese(text) {
   return /[\u3000-\u9FFF\uF900-\uFAFF]/.test(text || '')
@@ -247,14 +240,7 @@ async function trySearchSeries(titles) {
   return null
 }
 
-function toSlug(title) {
-  return title
-    .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[':!.,?()[\]]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-}
+
 
 async function probeSlug(slug, type, domain) {
   const path = type === 'series' ? `/streaming/series/${slug}/` : `/streaming/${slug}/`
@@ -312,27 +298,6 @@ async function trySlugFallback(title, type, season) {
 }
 
 
-function toStream(name, url, quality, language, subType) {
-  let origin = SITE.BASE_URL
-  try {
-    origin = new URL(url).origin
-  } catch {}
-  const s = {
-    name,
-    title: `[${language}] Wookafr${quality !== 'HD' ? ` [${quality}]` : ''}`,
-    url,
-    quality,
-    language,
-    headers: {
-      Referer: `${origin}/`,
-      Origin: origin,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    },
-  }
-  if (subType) s.subType = subType
-  return s
-}
-
 export async function extractStreams(tmdbId, mediaType, season, episode) {
   const startTime = Date.now()
   const BUDGET_MS = 45000
@@ -369,7 +334,7 @@ async function extractMovie(tmdbId, titles, subType) {
       const quality = detectQuality(iframeUrl, match.title)
 
       console.log(`[Wookafr] Iframe: ${iframeUrl} [${lang}]`)
-      const stream = toStream('Wookafr', iframeUrl, quality, lang, subType)
+      const stream = toStream(iframeUrl, lang, 'Wookafr', SITE.BASE_URL, { quality, subType })
       const resolved = await withTimeout(resolveStream(stream), 8000)
       if (resolved && resolved.url) return [{ ...resolved, provider: 'wookafr' }]
   } catch (e) {
@@ -381,24 +346,7 @@ async function extractMovie(tmdbId, titles, subType) {
 async function extractSeries(tmdbId, mediaType, titles, season, episode, subType) {
   const effectiveSeason = titles.effectiveSeason != null ? titles.effectiveSeason : season
   const targetSeasonNum = parseInt(effectiveSeason) || 1
-  let targetEpisodeNums = [parseInt(episode) || 1]
-
-  const startTime = Date.now()
-  const BUDGET_MS = 45000
-
-  if (!isBudgetExhausted(startTime, BUDGET_MS)) {
-    try {
-      const imdbId = await getImdbId(tmdbId, mediaType)
-      if (imdbId && !isBudgetExhausted(startTime, BUDGET_MS)) {
-        const absoluteEp = await getAbsoluteEpisode(imdbId, season, episode)
-        if (absoluteEp && absoluteEp !== parseInt(episode)) {
-          targetEpisodeNums.push(absoluteEp)
-        }
-      }
-    } catch (e) {
-      console.warn(`[Wookafr] ArmSync failed: ${e.message}`)
-    }
-  }
+  const targetEpisodeNums = await resolveTargetEpisodes(tmdbId, mediaType, season, episode, { startTime: Date.now(), budgetMs: 45000 })
 
   const match = await trySearchSeries(titles)
   if (!match) {
@@ -416,7 +364,7 @@ async function extractSeries(tmdbId, mediaType, titles, season, episode, subType
       if (iframeUrl) {
         const lang = detectLanguage(match.url, seriesHtml)
         const quality = detectQuality(iframeUrl, match.title)
-        const stream = toStream('Wookafr', iframeUrl, quality, lang, subType)
+        const stream = toStream(iframeUrl, lang, 'Wookafr', SITE.BASE_URL, { quality, subType })
         const resolved = await withTimeout(resolveStream(stream), 8000)
         if (resolved && resolved.url) return [{ ...resolved, provider: 'wookafr' }]
       }
@@ -483,7 +431,7 @@ async function extractSeries(tmdbId, mediaType, titles, season, episode, subType
     const quality = detectQuality(iframeUrl, ep.title)
 
     console.log(`[Wookafr] Iframe: ${iframeUrl} [${lang}]`)
-    const stream = toStream('Wookafr', iframeUrl, quality, lang, subType)
+    const stream = toStream(iframeUrl, lang, 'Wookafr', SITE.BASE_URL, { quality, subType })
     const resolved = await withTimeout(resolveStream(stream), 8000)
     if (resolved && resolved.url) return [{ ...resolved, provider: 'wookafr' }]
   } catch (e) {

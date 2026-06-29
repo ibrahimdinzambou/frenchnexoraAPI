@@ -1,6 +1,7 @@
 import { fetchText, BASE } from './http.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 import { resolveStream, safeJson } from '../utils/resolvers.js';
+import { normalize } from '../utils/dle-extractor.js';
 
 function extractPushContent(html) {
     const chunks = [];
@@ -77,15 +78,6 @@ function extractAnimeServerData(html) {
         console.error("[Mugiwara] JSON parse error:", e.message);
         return null;
     }
-}
-
-function normalizeSearchTitle(s) {
-    if (!s) return "";
-    return s.toLowerCase()
-        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-        .replace(/[':!.,?()\-]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
 }
 
 function searchAnime(html) {
@@ -277,7 +269,7 @@ async function findSlug(titles) {
     tryQueries.sort((a, b) => a.priority - b.priority);
 
     for (const { title: t } of tryQueries) {
-        const nt = normalizeSearchTitle(t);
+        const nt = normalize(t);
         if (nt.length < 4) continue;
 
         const query = encodeURIComponent(t);
@@ -295,11 +287,11 @@ async function findSlug(titles) {
         let bestScore = -1;
 
         for (const r of results) {
-            const nr = normalizeSearchTitle(r.anime);
+            const nr = normalize(r.anime);
             let score = 0;
             if (nr === nt) score = 100;
             else if (nr.includes(nt) || nt.includes(nr)) score = 80;
-            else if (r.matched && normalizeSearchTitle(r.matched) === nt) score = 90;
+            else if (r.matched && normalize(r.matched) === nt) score = 90;
 
             if (score > bestScore) {
                 bestScore = score;

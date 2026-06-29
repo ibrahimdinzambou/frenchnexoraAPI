@@ -5,7 +5,7 @@
 import { fetchText } from './http.js';
 import cheerio from 'cheerio-without-node-native';
 import { resolveStream, withTimeout, isBudgetExhausted, sortStreamsByLanguage } from '../utils/resolvers.js';
-import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
+import { resolveTargetEpisodes } from '../utils/dle-extractor.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 
 const BASE_URL = "https://ipv4.vostfree.ws";
@@ -122,20 +122,10 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         return aJp - bJp;
     });
 
-    // --- ARMSYNC Metadata Resolution ---
+    // --- ArmSync: resolve absolute episode for TV series ---
     let targetEpisodes = episode !== undefined && episode !== null ? [episode] : [];
     if (mediaType === 'tv' && targetEpisodes.length > 0 && !isBudgetExhausted(startTime, BUDGET_MS)) {
-        try {
-            const imdbId = await getImdbId(tmdbId, mediaType);
-            if (imdbId && !isBudgetExhausted(startTime, BUDGET_MS)) {
-                const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, episode);
-                if (absoluteEpisode && absoluteEpisode !== episode) {
-                    targetEpisodes.push(absoluteEpisode);
-                }
-            }
-        } catch (e) {
-            console.warn(`[Vostfree] ArmSync failed: ${e.message}`);
-        }
+        targetEpisodes = await resolveTargetEpisodes(tmdbId, mediaType, season, episode, { startTime, budgetMs: BUDGET_MS });
     }
     // ------------------------------------
 
@@ -378,6 +368,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         title: s.title || 'Stream',
         url: s.url || '',
         quality: s.quality || 'HD',
+        language: s.language || null,
         isDirect: true,
         headers: s.headers || {}
     }));

@@ -1,9 +1,8 @@
 import cheerio from 'cheerio-without-node-native'
 import { fetchText, postSearch } from './http.js'
 import { getTmdbTitles } from '../utils/metadata.js'
-import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js'
 import {
-  normalize, cached, scoreMatch, resolveWithTimeout, detectSubType, toStream, parseAvailableSeasons, stripSeasonSuffix,
+  normalize, cached, scoreMatch, resolveWithTimeout, detectSubType, toStream, parseAvailableSeasons, stripSeasonSuffix, resolveTargetEpisodes,
 } from '../utils/dle-extractor.js'
 import {
   SITE, PATTERNS, TIMEOUTS, SCORES,
@@ -441,16 +440,8 @@ async function extractMoviePageStreams(match, subType) {
 async function extractSeries(tmdbId, mediaType, titles, season, episode, subType) {
   const effectiveSeason = titles.effectiveSeason != null ? titles.effectiveSeason : season
   const targetSeasonNum = parseInt(effectiveSeason) || 1
-  let absoluteEp = null
-
-  try {
-    const imdbId = await getImdbId(tmdbId, mediaType)
-    if (imdbId) {
-      absoluteEp = await getAbsoluteEpisode(imdbId, season, episode)
-    }
-  } catch (e) {
-    console.warn(`[VoiranimeRip] ArmSync failed: ${e.message}`)
-  }
+  const targetEpisodeNums = await resolveTargetEpisodes(tmdbId, mediaType, season, episode)
+  const absoluteEp = targetEpisodeNums.length > 1 ? targetEpisodeNums[1] : null
 
   const matches = await searchAnime(titles)
   if (!matches || matches.length === 0) {
@@ -490,7 +481,7 @@ async function extractSeries(tmdbId, mediaType, titles, season, episode, subType
       }
 
       // Also try absolute episode across seasons if available
-      if (absoluteEp !== null && absoluteEp !== (parseInt(episode) || 1)) {
+      if (absoluteEp !== null && absoluteEp !== (targetEpisodeNums[0])) {
         for (const siteSeason of availableSeasons) {
           attempts.push({ match, season: siteSeason, episode: absoluteEp })
         }

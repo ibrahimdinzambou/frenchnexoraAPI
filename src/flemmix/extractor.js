@@ -2,21 +2,12 @@ import { fetchText, fetchJson } from './http.js'
 import cheerio from 'cheerio-without-node-native'
 import { resolveStream, safeFetch } from '../utils/resolvers.js'
 import { getTmdbTitles } from '../utils/metadata.js'
-import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js'
+import { toStream, normalize, resolveTargetEpisodes } from '../utils/dle-extractor.js'
 import {
   SITE, ENDPOINTS, SELECTORS, PATTERNS, TIMEOUTS, SCORES,
   LANGUAGE_MAP, ANIME_GENRE_ID, ANIME_KEYWORDS,
   CACHE_TTL, MAX_SEARCH_TITLES,
 } from './config.js'
-
-function normalize(s) {
-  return (s || '')
-    .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[':!.,?()[\]]/g, ' ')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ').trim()
-}
 
 function isJapanese(text) {
   return /[\u3000-\u9FFF\uF900-\uFAFF]/.test(text || '')
@@ -169,24 +160,6 @@ async function trySearch(titles, filterSeries) {
   return null
 }
 
-function toStream(name, url, quality, language, subType) {
-  const origin = (() => { try { return new URL(url).origin } catch { return SITE.BASE_URL } })()
-  const s = {
-    name,
-    title: `[${language}] Flemmix${quality !== 'HD' ? ` [${quality}]` : ''}`,
-    url,
-    quality,
-    language,
-    headers: {
-      Referer: `${SITE.BASE_URL}/`,
-      Origin: SITE.BASE_URL,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    },
-  }
-  if (subType) s.subType = subType
-  return s
-}
-
 async function resolveWithTimeout(stream) {
   try {
     const resolved = await resolveStream(stream)
@@ -200,7 +173,7 @@ async function resolveWithTimeout(stream) {
 async function createStreamsFromServers(servers, name, subType) {
   const results = await Promise.allSettled(
     servers.map(async (server) => {
-      const stream = toStream(name, server.url, server.quality || 'HD', server.language || 'VF', subType)
+      const stream = toStream(server.url, server.language || 'VF', name, SITE.BASE_URL, { quality: server.quality || 'HD', subType })
       const resolved = await resolveWithTimeout(stream)
       if (resolved && resolved.url) {
         return { ...resolved, provider: 'flemmix' }
@@ -293,19 +266,7 @@ async function extractMovie(tmdbId, titles, subType) {
 async function extractSeries(tmdbId, mediaType, titles, season, episode, subType) {
   const effectiveSeason = titles.effectiveSeason != null ? titles.effectiveSeason : season
   const targetSeasonNum = parseInt(effectiveSeason) || 1
-  let targetEpisodeNums = [parseInt(episode) || 1]
-
-  try {
-    const imdbId = await getImdbId(tmdbId, mediaType)
-    if (imdbId) {
-      const absoluteEp = await getAbsoluteEpisode(imdbId, season, episode)
-      if (absoluteEp && absoluteEp !== parseInt(episode)) {
-        targetEpisodeNums.push(absoluteEp)
-      }
-    }
-  } catch (e) {
-    console.warn(`[Flemmix] ArmSync failed: ${e.message}`)
-  }
+  const targetEpisodeNums = await resolveTargetEpisodes(tmdbId, mediaType, season, episode)
 
   const match = await trySearch(titles, true) || await browseCategory('tv', titles)
   if (!match) {

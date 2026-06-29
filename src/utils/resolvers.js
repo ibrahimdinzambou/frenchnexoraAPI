@@ -176,6 +176,12 @@ const HEADERS = {
     "Accept-Encoding": "identity",
 };
 
+/** User-Agent standard partagé par tous les providers */
+export const USER_AGENT = HEADERS["User-Agent"];
+
+/** Headers de base partagés par tous les providers */
+export const BASE_HEADERS = { ...HEADERS };
+
 const _atob = (str) => {
     try { return atob(str); }
     catch (e) { return str; }

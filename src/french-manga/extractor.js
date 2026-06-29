@@ -1,9 +1,8 @@
 import cheerio from 'cheerio-without-node-native'
-import { fetchText, fetchJson, ajaxSearch, fetchCategoryPage } from './http.js'
+import { fetchText, fetchJson, ajaxSearch } from './http.js'
 import { resolveStream, safeFetch } from '../utils/resolvers.js'
 import { getTmdbTitles } from '../utils/metadata.js'
-import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js'
-import { stripSeasonSuffix } from '../utils/dle-extractor.js'
+import { stripSeasonSuffix, resolveTargetEpisodes, toStream } from '../utils/dle-extractor.js'
 import {
   SITE, ENDPOINTS, PATTERNS, TIMEOUTS, SCORES,
   LANGUAGE_MAP, CACHE_TTL, MAX_SEARCH_TITLES,
@@ -243,12 +242,20 @@ async function trySearch(titles, targetSeason) {
   // Strip season suffixes from TMDB titles for better matching
   const cleanTitles = titles.map(t => stripSeasonSuffix(t));
   const allPostResults = []
+  const dedupResults = new Map()
+  
   for (const title of cleanTitles.slice(0, MAX_SEARCH_TITLES)) {
     try {
-      // Try POST search first (actual DLE filtered search — more accurate)
+      // Try POST search first (AJAX — real search)
       const postResults = await trySearchPostRaw(title, targetSeason)
       if (postResults) {
-        allPostResults.push(...postResults)
+        for (const r of postResults) {
+          const key = r.newsid || r.url
+          if (key && !dedupResults.has(key)) {
+            dedupResults.set(key, r)
+            allPostResults.push(r)
+          }
+        }
         const postMatch = bestMatch(postResults, title, targetSeason)
         if (postMatch) return postMatch
       }
@@ -260,7 +267,9 @@ async function trySearch(titles, targetSeason) {
     } catch (e) {
       console.warn(`[FrenchManga] Search failed for "${title}": ${e.message}`)
     }
-  }    // Deep fallback: check low-scoring POST results via page content (parallel, short timeout)
+  }
+  
+  // Deep fallback: check low-scoring POST results via page content (parallel, short timeout)
   if (allPostResults.length > 0) {
     console.log(`[FrenchManga] Trying deep fallback on ${allPostResults.length} POST results...`)
     const fallbackMatch = await trySearchFallback(allPostResults, titles)
@@ -271,7 +280,7 @@ async function trySearch(titles, targetSeason) {
 }
 
 async function trySearchPostRaw(title, targetSeason) {
-  // Try AJAX search first (real search endpoint)
+  // Try AJAX search first (real search endpoint) — works for all titles
   try {
     const html = await ajaxSearch(title, { timeout: TIMEOUTS.SEARCH })
       if (html && html.length > 50) {
@@ -285,24 +294,8 @@ async function trySearchPostRaw(title, targetSeason) {
     console.warn(`[FrenchManga] AJAX search failed for "${title}": ${e.message}`)
   }
   
-  // Fallback: category pages for broader matching (cached per category)
-  const categories = ['films', 'mangas', 'animes', 'animes-vf', 'animes-vostfr']
-  for (const cat of categories) {
-    try {
-      const html = await cached(`category_${cat}`, () =>
-        fetchCategoryPage(cat, { timeout: TIMEOUTS.SEARCH })
-      )
-      if (html && html.length > 100) {
-        const results = parseSearchResults(html)
-        if (results.length > 0) {
-          console.log(`[FrenchManga] Category "${cat}" has ${results.length} items, checking for "${title}"...`)
-          const match = bestMatch(results, title, targetSeason)
-          if (match) return results
-        }
-      }
-    } catch {}
-  }
-  
+  // Note: trySearchGet (called from trySearch) already handles the
+  // main page listing fallback. No need to duplicate here.
   return null
 }
 
@@ -312,24 +305,6 @@ async function fetchEpisodeApi(newsid) {
     const json = await fetchJson(url, { timeout: TIMEOUTS.API })
     return parseEpisodeApiData(json)
   })
-}
-
-function toStream(name, url, quality, language) {
-  let origin = SITE.BASE_URL
-  try { origin = new URL(url).origin } catch {}
-
-  return {
-    name,
-    title: `[${language}] French-Manga${quality !== 'HD' ? ` [${quality}]` : ''}`,
-    url,
-    quality: quality || 'HD',
-    language: language || 'VF',
-    headers: {
-      Referer: `${SITE.BASE_URL}/`,
-      Origin: SITE.BASE_URL,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    },
-  }
 }
 
 async function resolveWithTimeout(stream) {
@@ -436,19 +411,7 @@ async function extractMovie(tmdbId, titles, subType) {
 async function extractSeries(tmdbId, mediaType, titles, season, episode, subType) {
   const effectiveSeason = titles.effectiveSeason != null ? titles.effectiveSeason : season
   const targetSeasonNum = parseInt(effectiveSeason) || 1
-  let targetEpisodeNums = [parseInt(episode) || 1]
-
-  try {
-    const imdbId = await getImdbId(tmdbId, mediaType)
-    if (imdbId) {
-      const absoluteEp = await getAbsoluteEpisode(imdbId, season, episode)
-      if (absoluteEp && absoluteEp !== parseInt(episode)) {
-        targetEpisodeNums.push(absoluteEp)
-      }
-    }
-  } catch (e) {
-    console.warn(`[FrenchManga] ArmSync failed: ${e.message}`)
-  }
+  const targetEpisodeNums = await resolveTargetEpisodes(tmdbId, mediaType, season, episode)
 
   const match = await trySearch(titles, targetSeasonNum)
   if (!match) {
@@ -496,11 +459,11 @@ async function extractSeries(tmdbId, mediaType, titles, season, episode, subType
       console.log(`[FrenchManga] Found episode ${ep.num} (${lang}) with ${ep.servers.length} server(s)`)
 
       for (const server of ep.servers) {
-        const stream = toStream('FrenchManga', server.url, 'HD', lang)
+        const stream = toStream(server.url, lang, 'FrenchManga', SITE.BASE_URL, { quality: 'HD' })
         if (subType) stream.subType = subType
 
         const resolved = await resolveWithTimeout(stream)
-        if (resolved && resolved.url) {
+        if (resolved && resolved.url && resolved.isDirect) {
           streams.push({ ...resolved, provider: 'french-manga' })
         }
       }
@@ -525,11 +488,11 @@ async function extractStreamsFromApi(apiData, name, subType) {
     console.log(`[FrenchManga] Found movie (${lang}) with ${firstEp.servers.length} server(s)`)
 
     for (const server of firstEp.servers) {
-      const stream = toStream(name, server.url, 'HD', lang)
+      const stream = toStream(server.url, lang, name, SITE.BASE_URL, { quality: 'HD' })
       if (subType) stream.subType = subType
 
       const resolved = await resolveWithTimeout(stream)
-      if (resolved && resolved.url) {
+      if (resolved && resolved.url && resolved.isDirect) {
         streams.push({ ...resolved, provider: 'french-manga' })
       }
     }

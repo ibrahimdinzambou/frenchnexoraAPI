@@ -1,7 +1,7 @@
 import { fetchText, fetchJson } from './http.js';
 import cheerio from 'cheerio-without-node-native';
 import { resolveStream, sortStreamsByLanguage, sleep, fetchWithRetry } from '../utils/resolvers.js';
-import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
+import { resolveTargetEpisodes } from '../utils/dle-extractor.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 
 const BASE_URL = "https://animoflix.to";
@@ -10,6 +10,16 @@ const TIMEOUT = 25000;
 
 const SPECIAL_SLUG_RE = /(?:ona|oav|film|movie|special|scan|chapitre|volume|dub|uncut)(?:-|$)/i;
 const MAX_TITLE_SEARCHES = 10;
+
+// Cache TTL pour AnimoFlix (5 minutes)
+const ANF_CACHE_TTL = 5 * 60 * 1000;
+const anfCache = new Map();
+
+function anfCached(key, fn) {
+  const now = Date.now();
+  if (anfCache.has(key) && now - anfCache.get(key).ts < ANF_CACHE_TTL) return anfCache.get(key).data;
+  return fn().then(data => { anfCache.set(key, { data, ts: now }); return data; });
+}
 
 async function searchAnime(title) {
     try {
@@ -143,20 +153,7 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
     const effectiveSeason = titles.effectiveSeason != null ? titles.effectiveSeason : season;
 
     const isMovie = mediaType === 'movie';
-    let targetEpisodes = isMovie ? [1] : [episode || 1];
-    if (!isMovie) {
-        try {
-            const imdbId = await getImdbId(tmdbId, mediaType);
-            if (imdbId) {
-                const absoluteEpisode = await getAbsoluteEpisode(imdbId, season, episode);
-                if (absoluteEpisode && absoluteEpisode !== episode) {
-                    targetEpisodes.push(absoluteEpisode);
-                }
-            }
-        } catch (e) {
-            console.warn(`[AnimoFlix] ArmSync failed: ${e.message}`);
-        }
-    }
+    const targetEpisodes = await resolveTargetEpisodes(tmdbId, mediaType, season, episode);
 
     let bestMatch = null;
     const badSlugs = new Set();
@@ -187,30 +184,50 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
 
     const ranked = [...scored.values()].sort((a, b) => b.score - a.score);
 
-    // Verify candidates in order (best score first)
-    for (const candidate of ranked) {
-        const verifyHtml = await fetchWithRetry(() => fetchText(`${BASE_URL}/anime/${candidate.slug}/`, { timeout: TIMEOUT }));
-        const $v = cheerio.load(verifyHtml);
-        const pageTitle = $v('h1.hero-title').first().text().trim();
-        let matchOk = true;
-        if (!pageTitle) {
-            console.warn(`[AnimoFlix] No page title found for slug ${candidate.slug} — rejecting`);
-            badSlugs.add(candidate.slug);
-            matchOk = false;
-        } else {
+    // Verify candidates in parallel batches of 2 with 800ms gap between batches
+    // (site is very aggressive with rate limiting — 429 on >3 rapid requests)
+    const topCandidates = ranked.slice(0, 8);
+    let foundMatch = false;
+    
+    for (let i = 0; i < topCandidates.length && !foundMatch; i += 2) {
+      const batch = topCandidates.slice(i, i + 2);
+      const batchResults = await Promise.allSettled(
+        batch.map(async (candidate) => {
+          try {
+            const verifyHtml = await fetchWithRetry(() => fetchText(`${BASE_URL}/anime/${candidate.slug}/`, { timeout: 10000 }));
+            const $v = cheerio.load(verifyHtml);
+            const pageTitle = $v('h1.hero-title').first().text().trim();
+            if (!pageTitle) {
+              badSlugs.add(candidate.slug);
+              return null;
+            }
             const nPage = normalize(pageTitle);
             const nTmdbTitles = titles.slice(0, 5).map(t => normalize(t));
             const matchesTmdb = nTmdbTitles.some(nt => nPage.includes(nt) || nt.includes(nPage));
             if (!matchesTmdb) {
-                console.warn(`[AnimoFlix] Page title mismatch: "${pageTitle}" doesn't match any TMDB title — rejecting slug ${candidate.slug}`);
-                badSlugs.add(candidate.slug);
-                matchOk = false;
+              badSlugs.add(candidate.slug);
+              return null;
             }
+            return candidate;
+          } catch {
+            badSlugs.add(candidate.slug);
+            return null;
+          }
+        })
+      );
+      
+      for (const r of batchResults) {
+        if (r.status === 'fulfilled' && r.value) {
+          bestMatch = r.value;
+          foundMatch = true;
+          break;
         }
-        if (matchOk) {
-            bestMatch = candidate;
-            break;
-        }
+      }
+
+      // Small delay between batches to respect rate limits
+      if (!foundMatch && i + 2 < topCandidates.length) {
+        await sleep(800);
+      }
     }
 
     if (!bestMatch) {
@@ -221,7 +238,9 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
     const slug = bestMatch.slug;
     console.log(`[AnimoFlix] Matched: "${bestMatch.title}" (slug: ${slug})`);
 
-    const animeDetailHtml = await fetchWithRetry(() => fetchText(`${BASE_URL}/anime/${slug}/`, { timeout: TIMEOUT }));
+    const animeDetailHtml = await anfCached(`serie_${slug}`, () =>
+      fetchWithRetry(() => fetchText(`${BASE_URL}/anime/${slug}/`, { timeout: TIMEOUT }))
+    );
     const $ = cheerio.load(animeDetailHtml);
 
     const pageTitle = $('h1.hero-title').first().text().trim();
@@ -310,7 +329,9 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
             ? targetSeason.href
             : `${BASE_URL}${targetSeason.href.startsWith('/') ? '' : '/'}${targetSeason.href}`;
 
-        const seasonHtml = await fetchWithRetry(() => fetchText(seasonPageUrl, { timeout: TIMEOUT }));
+        const seasonHtml = await anfCached(`season_${slug}_${targetSeason.seasonNum}`, () =>
+          fetchWithRetry(() => fetchText(seasonPageUrl, { timeout: TIMEOUT }))
+        );
         const $s = cheerio.load(seasonHtml);
         const episodeLinks = {};
 
@@ -511,11 +532,64 @@ async function extractEpisodeStreams(episodeUrl, langLabel, slug) {
         }
     }
 
+    // Method 7: data-video or data-embed-url attributes
+    if (embedUrls.length === 0) {
+        $('[data-video], [data-embed-url], [data-player-url]').each((i, el) => {
+            const val = $(el).attr('data-video') || $(el).attr('data-embed-url') || $(el).attr('data-player-url');
+            if (val && val.startsWith('http') && !embedUrls.includes(val)) {
+                embedUrls.push(val);
+            }
+        });
+    }
+
+    // Method 8: Look for <a> with class play-now or similar that has data-href
+    if (embedUrls.length === 0) {
+        $('a[data-href*="http"], a.play-now[href*="http"], a.btn-player[href*="http"]').each((i, el) => {
+            const val = $(el).attr('data-href') || $(el).attr('href');
+            if (val && val.startsWith('http') && !embedUrls.includes(val)) {
+                embedUrls.push(val);
+            }
+        });
+    }
+
+    // Method 9: Parse embedded base64-encoded URLs in scripts
+    if (embedUrls.length === 0) {
+        const b64matches = html.match(/atob\(['"]([A-Za-z0-9+/=]+)['"]\)/g);
+        if (b64matches) {
+            for (const match of b64matches) {
+                try {
+                    const b64 = match.match(/atob\(['"]([A-Za-z0-9+/=]+)['"]\)/);
+                    if (b64) {
+                        const decoded = atob(b64[1]);
+                        if (decoded.startsWith('http') && !embedUrls.includes(decoded)) {
+                            embedUrls.push(decoded);
+                        }
+                    }
+                } catch {}
+            }
+        }
+    }
+
+    // Method 10: Search for any URL pattern ending in .mp4/.m3u8 within script content
+    if (embedUrls.length === 0) {
+        $('script').each((i, el) => {
+            const content = $(el).html() || '';
+            // Skip scripts with only whitespace or JSON
+            if (content.length < 20) return;
+            const urls = content.match(/"(https?:\/\/[^"']+\.(?:mp4|m3u8)[^"']*)"/i);
+            if (urls && !embedUrls.includes(urls[1])) {
+                embedUrls.push(urls[1]);
+                return false; // stop after first found
+            }
+        });
+    }
+
     const results = await Promise.allSettled(
         embedUrls.map(url =>
             resolveStream({
                 name: `AnimoFlix (${langLabel})`,
-                title: `${langLabel}`,
+                title: `[${langLabel}] AnimoFlix`,
+                language: langLabel,
                 url: url,
                 quality: 'HD',
                 headers: { Referer: `${BASE_URL}/anime/${slug}/` }

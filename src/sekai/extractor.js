@@ -1,6 +1,6 @@
 import { fetchText } from './http.js';
 import { isBudgetExhausted } from '../utils/resolvers.js';
-import { getImdbId, getAbsoluteEpisode } from '../utils/armsync.js';
+import { resolveTargetEpisodes } from '../utils/dle-extractor.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 
 const BASE_URL = "https://sekai.one";
@@ -210,18 +210,8 @@ export async function extractStreams(tmdbId, mediaType, season, episodeNum) {
     
     const effectiveSeason = titles.effectiveSeason != null ? titles.effectiveSeason : season;
 
-    let absEp = mediaType === 'movie' ? 1 : episodeNum;
-    if (mediaType === 'tv' && !isBudgetExhausted(startTime, BUDGET_MS)) {
-        try {
-            const imdbId = await getImdbId(tmdbId, mediaType);
-            if (imdbId && !isBudgetExhausted(startTime, BUDGET_MS)) {
-                const resolved = await getAbsoluteEpisode(imdbId, season, episodeNum);
-                if (resolved) absEp = resolved;
-            }
-        } catch (e) {
-            console.warn(`[Sekai] ArmSync failed: ${e?.message}`);
-        }
-    }
+    const [ep, absoluteEp] = await resolveTargetEpisodes(tmdbId, mediaType, season, episodeNum, { startTime, budgetMs: BUDGET_MS });
+    const absEp = absoluteEp || ep;
 
     console.log(`[Sekai] Checking ${mediaType} S${season} E${episodeNum} -> Absolute: ${absEp}`);
     
