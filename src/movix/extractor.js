@@ -1,14 +1,20 @@
 import { fetchJson } from './http.js';
-import { resolveStream, withTimeout } from '../utils/resolvers.js';
+import { resolveStream, withTimeout, safeFetch, USER_AGENT } from '../utils/resolvers.js';
 import { getUrlOrigin, normalizeLangTag } from '../utils/dle-extractor.js';
+import { getTmdbTitle } from '../utils/search-fallback.js';
 
-const API_BASE = 'https://api.movix.cloud';
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+// ─── Configuration ──────────────────────────────────────────────────────────
+const API_DOMAINS = [
+    'https://api.movix.cloud',
+    'https://api.movix.cash'
+];
 
 // Hosts connus pour être lents ou problématiques → on les ignore
 const SLOW_HOSTS = ['up4fun', 'dood', 'doodstream', 'moonplayer', 'filemoon', 'streamtape', 'stape'];
 // Hosts rapides prioritaires (résolution fiable en < 3s)
 const FAST_HOSTS = ['voe', 'uqload', 'fsvid', 'vidzy', 'netu', 'younetu', 'sendvid', 'sibnet'];
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 /** Score de priorité d'un stream : plus bas = résolu en premier */
 function streamPriority(url, language) {
@@ -32,19 +38,6 @@ function streamPriority(url, language) {
     return score;
 }
 
-function pushStream(streams, provider, server, lang, url, quality) {
-    if (!url || typeof url !== 'string') return;
-    const origin = getUrlOrigin(url, 'https://movix.cash');
-    streams.push({
-        name: 'Movix',
-        title: `[${normalizeLangTag(lang)}] ${provider} - ${server || 'Player'}`,
-        url,
-        quality: quality || 'HD',
-        language: normalizeLangTag(lang),
-        headers: { Referer: origin + '/', Origin: origin, 'User-Agent': USER_AGENT }
-    });
-}
-
 function isExoPlayableUrl(url) {
     if (!url || typeof url !== 'string') return false;
     const u = url.toLowerCase();
@@ -60,7 +53,6 @@ async function resolveForExo(stream) {
     if (isExoPlayableUrl(stream.url)) {
         resolved = { ...stream, isDirect: true };
     } else {
-        // Timeout réduit à 4s pour accélérer l'échec sur les hosts lents
         try { resolved = await withTimeout(resolveStream(stream), 4000); }
         catch (e) { console.warn(`[Movix] resolveStream timeout: ${e?.message}`); }
     }
@@ -76,92 +68,222 @@ async function resolveForExo(stream) {
     };
 }
 
-async function fetchOnce(url) {
-    try {
-        const data = await fetchJson(url);
-        if (!data || data.error) return null;
-        return data;
-    } catch (e) { console.warn(`[Movix] fetchOnce failed: ${e?.message}`); return null; }
+// ─── Extraction des données source depuis l'API Movix ───────────────────────
+
+/**
+ * Tente de récupérer les sources depuis un domaine API.
+ * Avec retry géré par fetchJson.
+ */
+async function fetchFromDomain(baseUrl, tmdbId, mediaType, season) {
+    const isMovie = mediaType === 'movie';
+    const path = isMovie
+        ? `${baseUrl}/api/fstream/movie/${tmdbId}`
+        : `${baseUrl}/api/fstream/tv/${tmdbId}/season/${Number(season) || 1}`;
+
+    const data = await fetchJson(path, { retries: 1 });
+    if (!data) return null;
+
+    return { data, provider: path.includes('cloud') ? 'fstream' : 'fstream-cash' };
 }
 
-export async function extractStreams(tmdbId, mediaType, season, episode) {
+/**
+ * Parse les streams depuis la réponse de l'API fstream
+ */
+function parseStreams(data, provider, isMovie, episodeNum) {
     const streams = [];
-    if (!tmdbId) { console.log('[Movix] Missing tmdbId'); return streams; }
+
+    if (!data || typeof data !== 'object') return streams;
+
+    // Format 1: data.players { lang: [{player, url, quality}] }
+    if (data.players) {
+        for (const lang of Object.keys(data.players)) {
+            const list = data.players[lang];
+            if (!Array.isArray(list)) continue;
+            for (const item of list) {
+                pushStream(streams, provider, item?.player, lang, item?.url, item?.quality);
+            }
+        }
+    }
+
+    // Format 2: data.links { lang: [{name, url, quality}] }
+    if (data.links) {
+        for (const lang of Object.keys(data.links)) {
+            const list = data.links[lang];
+            if (!Array.isArray(list)) continue;
+            for (const item of list) {
+                pushStream(streams, provider, item?.name || item?.player, lang, item?.url, item?.quality);
+            }
+        }
+    }
+
+    // Format 3 (TV): data.episodes[episode].languages { lang: [{player, url}] }
+    // Format 4 (TV): data.episodes[episode] { vf: [...], vostfr: [...] }
+    if (!isMovie && data.episodes) {
+        const ep = data.episodes[String(episodeNum)] || data.episodes[episodeNum];
+        if (ep && typeof ep === 'object') {
+            // Format 3: ep.languages
+            if (ep.languages) {
+                for (const lang of Object.keys(ep.languages)) {
+                    const list = ep.languages[lang];
+                    if (!Array.isArray(list)) continue;
+                    for (const item of list) {
+                        pushStream(streams, provider, item?.player, lang, item?.url, item?.quality);
+                    }
+                }
+            }
+            // Format 4: ep.vf, ep.vostfr, etc.
+            for (const lang of ['vf', 'vostfr', 'vo', 'VFF', 'VFQ', 'VOSTFR', 'Default']) {
+                const list = ep[lang];
+                if (!Array.isArray(list)) continue;
+                for (const item of list) {
+                    pushStream(streams, provider, item?.name || item?.player, lang, item?.url, item?.quality);
+                }
+            }
+        }
+    }
+
+    // Format 5: data.vf, data.vostfr (format cpasmal-compatible, présent dans fstream)
+    for (const lang of ['vf', 'vostfr', 'vo', 'VFF', 'VFQ']) {
+        const list = data[lang];
+        if (!Array.isArray(list)) continue;
+        for (const item of list) {
+            pushStream(streams, provider, item?.player || item?.name, lang, item?.url, item?.quality);
+        }
+    }
+
+    return streams;
+}
+
+function pushStream(streams, provider, server, lang, url, quality) {
+    if (!url || typeof url !== 'string') return;
+    const origin = getUrlOrigin(url, 'https://movix.cash');
+    streams.push({
+        name: 'Movix',
+        title: `[${normalizeLangTag(lang)}] ${provider} - ${server || 'Player'}`,
+        url,
+        quality: quality || 'HD',
+        language: normalizeLangTag(lang),
+        headers: { Referer: origin + '/', Origin: origin, 'User-Agent': USER_AGENT }
+    });
+}
+
+// ─── Fallback search ────────────────────────────────────────────────────────
+
+/**
+ * Fallback : cherche un contenu par titre via l'API Movix v1
+ * (si l'ID direct n'a rien donné)
+ * getTmdbTitle importé depuis search-fallback.js (cache global safeFetch 30s)
+ */
+async function searchFallback(baseUrl, tmdbId, mediaType, season, episode) {
+    console.log(`[Movix] Search fallback for TMDB ${tmdbId} (${mediaType})`);
+
+    // 1. Récupérer le titre depuis TMDB
+    const title = await getTmdbTitle(tmdbId, mediaType);
+    if (!title) {
+        console.log(`[Movix] No TMDB title found for ${tmdbId}`);
+        return null;
+    }
+
+    console.log(`[Movix] Searching for: "${title}"`);
+
+    // 2. Chercher sur l'API Movix v1 (search endpoint)
+    const searchQuery = encodeURIComponent(title);
+    const searchUrl = `${baseUrl}/api/v1/search?q=${searchQuery}`;
+
+    try {
+        const searchData = await fetchJson(searchUrl, { retries: 0 });
+        if (!searchData?.results && !Array.isArray(searchData)) {
+            console.log(`[Movix] No search results from ${baseUrl}`);
+            return null;
+        }
+
+        const results = searchData.results || searchData;
+        if (!Array.isArray(results) || results.length === 0) return null;
+
+        console.log(`[Movix] ${results.length} search result(s), trying alternates...`);
+
+        // 3. Essayer chaque résultat jusqu'à trouver des sources
+        for (const result of results.slice(0, 5)) {
+            const altId = result.id;
+            if (String(altId) === String(tmdbId)) continue; // déjà essayé
+
+            const resultType = result.media_type || mediaType;
+            if (resultType !== 'movie' && resultType !== 'tv') continue;
+
+            console.log(`[Movix] Trying TMDB ${altId} (${resultType})...`);
+
+            const path = resultType === 'movie'
+                ? `${baseUrl}/api/fstream/movie/${altId}`
+                : `${baseUrl}/api/fstream/tv/${altId}/season/${Number(season) || 1}`;
+
+            const altData = await fetchJson(path, { retries: 0 });
+            if (altData) {
+                const altStreams = parseStreams(altData, 'fstream', resultType === 'movie', Number(episode) || 1);
+                if (altStreams.length > 0) {
+                    console.log(`[Movix] Found ${altStreams.length} stream(s) via TMDB ${altId}`);
+                    return altStreams;
+                }
+            }
+        }
+    } catch (e) {
+        console.log(`[Movix] Search fallback error: ${e.message}`);
+    }
+
+    return null;
+}
+
+// ─── Fonction principale d'extraction ────────────────────────────────────────
+
+export async function extractStreams(tmdbId, mediaType, season, episode) {
+    if (!tmdbId) { console.log('[Movix] Missing tmdbId'); return []; }
 
     const isMovie = mediaType === 'movie';
     const episodeNum = Number(episode) || 1;
 
-    // API base: api.movix.cloud (migrée depuis api.movix.cash). Même format de données.
-    const legacyUrls = isMovie
-        ? [`${API_BASE}/api/fstream/movie/${tmdbId}`, `${API_BASE}/api/wiflix/movie/${tmdbId}`, `${API_BASE}/api/cpasmal/movie/${tmdbId}`]
-        : [`${API_BASE}/api/fstream/tv/${tmdbId}/season/${Number(season) || 1}`, `${API_BASE}/api/wiflix/tv/${tmdbId}/${Number(season) || 1}`, `${API_BASE}/api/cpasmal/tv/${tmdbId}/${Number(season) || 1}/${episodeNum}`];
+    let allStreams = [];
 
-    const results = await Promise.allSettled(legacyUrls.map(url => fetchOnce(url)));
-    let anyLegacyFound = false;
+    // Étape 1 : Essayer chaque domaine API avec l'endpoint fstream
+    for (const baseUrl of API_DOMAINS) {
+        console.log(`[Movix] Trying ${baseUrl}...`);
+        const result = await fetchFromDomain(baseUrl, tmdbId, mediaType, season);
 
-    for (const r of results) {
-        if (r.status !== 'fulfilled' || !r.value) continue;
-        anyLegacyFound = true;
-        const data = r.value;
-        if (data.players) {
-            for (const lang of Object.keys(data.players)) {
-                const list = data.players[lang];
-                if (!Array.isArray(list)) continue;
-                for (const item of list) pushStream(streams, 'FStream', item?.player, lang, item?.url, item?.quality);
+        if (result) {
+            const provider = result.provider;
+            const streams = parseStreams(result.data, provider, isMovie, episodeNum);
+            if (streams.length > 0) {
+                console.log(`[Movix] ${streams.length} stream(s) from ${baseUrl}`);
+                allStreams = streams;
+                break; // Trouvé sur ce domaine, pas besoin d'essayer le suivant
             }
-        }
-        if (data.links) {
-            for (const lang of Object.keys(data.links)) {
-                const list = data.links[lang];
-                if (!Array.isArray(list)) continue;
-                for (const item of list) pushStream(streams, 'Wiflix', item?.name || item?.player, lang, item?.url, item?.quality);
-            }
-        }
-        if (!isMovie) {
-            const ep = data?.episodes?.[String(episodeNum)] || data?.episodes?.[episodeNum];
-            if (ep && typeof ep === 'object') {
-                // Format 1: fstream → ep.languages { lang: [{player, url, quality}] }
-                if (ep.languages) {
-                    for (const lang of Object.keys(ep.languages)) {
-                        const list = ep.languages[lang];
-                        if (!Array.isArray(list)) continue;
-                        for (const item of list) pushStream(streams, 'FStream', item?.player, lang, item?.url, item?.quality);
-                    }
-                }
-
-                // Format 2: wiflix → ep { lang: [{name, url, episode}] }
-                for (const lang of ['vf', 'vostfr', 'vo', 'VFF', 'VFQ', 'VOSTFR', 'Default']) {
-                    const list = ep[lang];
-                    if (!Array.isArray(list)) continue;
-                    for (const item of list) pushStream(streams, 'Wiflix', item?.name || item?.player, lang, item?.url, item?.quality);
-                }
-            }
-        }
-
-        // Format 3: cpasmal direct format { vf: [{player, url}], vostfr: [...] }
-        // (data at top level, not nested under episodes)
-        for (const lang of ['vf', 'vostfr', 'vo', 'VFF', 'VFQ']) {
-            const list = data[lang];
-            if (!Array.isArray(list)) continue;
-            for (const item of list) pushStream(streams, 'Cpasmal', item?.player || item?.name, lang, item?.url, item?.quality);
         }
     }
 
-    if (!anyLegacyFound) {
+    // Étape 2 : Si aucun stream trouvé, essayer le fallback search
+    if (allStreams.length === 0) {
+        console.log('[Movix] No streams from direct API, trying search fallback...');
+        for (const baseUrl of API_DOMAINS) {
+            const fallbackStreams = await searchFallback(baseUrl, tmdbId, mediaType, season, episode);
+            if (fallbackStreams && fallbackStreams.length > 0) {
+                allStreams = fallbackStreams;
+                break;
+            }
+        }
+    }
+
+    if (allStreams.length === 0) {
         console.log('[Movix] No streams found from any source');
+        return [];
     }
 
-    if (streams.length === 0) return [];
-
-    // Déduplication + tri par priorité (VF d'abord, hosts rapides d'abord)
+    // ─── Déduplication + tri ────────────────────────────────────────────────
     const seen = new Set();
     const unique = [];
-    for (const s of streams) {
+    for (const s of allStreams) {
         if (!seen.has(s.url)) { seen.add(s.url); unique.push(s); }
     }
     unique.sort((a, b) => streamPriority(a.url, a.language) - streamPriority(b.url, b.language));
 
-    // Résolution par lots : 3 streams max, stop dès qu'on a des streams jouables
+    // ─── Résolution par lots ────────────────────────────────────────────────
     const MAX_RESOLVE = 3;
     const BATCH_SIZE = 2;
     const playable = [];

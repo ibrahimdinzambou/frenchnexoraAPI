@@ -6,19 +6,14 @@ import { toStream, normalize, resolveTargetEpisodes } from '../utils/dle-extract
 import {
   SITE, ENDPOINTS, SELECTORS, PATTERNS, TIMEOUTS, SCORES,
   LANGUAGE_MAP, ANIME_GENRE_ID, ANIME_KEYWORDS,
-  CACHE_TTL, MAX_SEARCH_TITLES,
+  MAX_SEARCH_TITLES,
 } from './config.js'
+import { createCache } from '../utils/cache.js'
+
+const withCache = createCache('fl', 'Flemmix')
 
 function isJapanese(text) {
   return /[\u3000-\u9FFF\uF900-\uFAFF]/.test(text || '')
-}
-
-const CACHE = new Map()
-
-function cached(key, fn) {
-  const now = Date.now()
-  if (CACHE.has(key) && now - CACHE.get(key).ts < CACHE_TTL) return CACHE.get(key).data
-  return fn().then(data => { CACHE.set(key, { data, ts: now }); return data })
 }
 
 function scoreMatch(resultTitle, searchTitle) {
@@ -124,7 +119,7 @@ async function fetchTmdbGenre(tmdbId, mediaType) {
 
 async function detectSubType(tmdbId, mediaType, titles) {
   try {
-    const details = await cached(`tmdb_${tmdbId}_${mediaType}`, () => fetchTmdbGenre(tmdbId, mediaType))
+    const details = await withCache(`tmdb_${tmdbId}_${mediaType}`, () => fetchTmdbGenre(tmdbId, mediaType), { successTtl: 300000, failureTtl: 60000 })
     if (!details) return null
     const genres = (details.genres || []).map(g => g.id)
     const isAnim = genres.includes(ANIME_GENRE_ID)

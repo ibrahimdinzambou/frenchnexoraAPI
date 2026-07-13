@@ -10,7 +10,7 @@ import { toSlug, resolveTargetEpisodes } from '../utils/dle-extractor.js';
 import { getTmdbTitles } from "../utils/metadata.js";
 
 const BASE_URL = "https://voir-anime.to";
-const HEAD_TIMEOUT = 1500;
+const HEAD_TIMEOUT = 800;
 const PAGE_TIMEOUT = 10000;
 const HOST_TIMEOUT = 8000;
 const SEARCH_TIMEOUT = 15000;
@@ -129,7 +129,7 @@ async function probeUrl(url) {
   }
 }
 
-async function batchProbe(urls, batchSize = 3, delayMs = 100) {
+async function batchProbe(urls, batchSize = 5, delayMs = 0) {
   const results = [];
   for (let i = 0; i < urls.length; i += batchSize) {
     const batch = urls.slice(i, i + batchSize);
@@ -143,7 +143,7 @@ async function batchProbe(urls, batchSize = 3, delayMs = 100) {
       if (r.status === "fulfilled" && r.value) results.push(r.value);
     }
     if (results.length > 0) return results; // Early exit si trouvé
-    if (i + batchSize < urls.length) await sleep(delayMs);
+    if (delayMs > 0 && i + batchSize < urls.length) await sleep(delayMs);
   }
   return results;
 }
@@ -386,20 +386,28 @@ async function searchAnime(title, season = 1) {
     ]
     
     const seenQueries = new Set()
-    for (const query of keywordQueries) {
-      if (!query || seenQueries.has(query.toLowerCase()) || isProbeBudgetExhausted()) continue
-      seenQueries.add(query.toLowerCase())
-      
-      console.log(`[VoirAnime] Keyword WP search: "${query}"`)
-      const searchResults = await wordpressSearch(query, season)
+    const uniqueQueries = keywordQueries.filter(q => {
+      if (!q || seenQueries.has(q.toLowerCase())) return false
+      seenQueries.add(q.toLowerCase())
+      return true
+    })
+    
+    if (uniqueQueries.length > 0) {
+      console.log(`[VoirAnime] Parallel keyword WP search: ${uniqueQueries.length} queries`)
+      const searchResults = await Promise.allSettled(
+        uniqueQueries.map(q => wordpressSearch(q, season))
+      )
       for (const r of searchResults) {
-        const lang = r.url.includes('-vf') ? 'VF' : 'VOSTFR'
-        if (!results.some(ex => ex.url === r.url)) {
-          results.push({ ...r, title: `${r.title}` })
+        if (r.status === 'fulfilled') {
+          for (const res of r.value) {
+            if (!results.some(ex => ex.url === res.url)) {
+              results.push({ ...res, title: `${res.title}` })
+            }
+          }
         }
       }
       if (results.length > 0) {
-        console.log(`[VoirAnime] Keyword WP search "${query}" found ${results.length} result(s)`)
+        console.log(`[VoirAnime] Parallel keyword search found ${results.length} result(s)`)
         return results
       }
     }

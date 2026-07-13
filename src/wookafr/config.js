@@ -1,12 +1,13 @@
 export const SITE = {
-  BASE_URL: 'https://wookafr.cymru',  // .fyi → .cymru (301 redirect)
-  DOMAINS: ['https://wookafr.cymru'],
+  BASE_URL: 'https://wookafr.cymru',
+  DOMAINS: ['https://wookafr.cymru', 'https://wookafr.fyi', 'https://wookafr.app', 'https://wookafr.to'],
   DOMAIN: 'wookafr.cymru',
 }
 
 export const ENDPOINTS = {
   SEARCH: `${SITE.BASE_URL}/?s=`,
   AJAX: `${SITE.BASE_URL}/wp-admin/admin-ajax.php`,
+  WP_API: `/wp-json/v2/posts`,
 }
 
 export const SELECTORS = {
@@ -64,3 +65,5 @@ export const ANIME_KEYWORDS = /\b(?:anime|japonais|japon|shonen|shoujo|seinen|ma
 export const CACHE_TTL = 5 * 60 * 1000
 export const MAX_CANDIDATES = 8
 export const MAX_SEARCH_TITLES = 2
+export const CACHE_NAMESPACE = 'wk'
+export const CACHE_TAG = 'Wookafr'

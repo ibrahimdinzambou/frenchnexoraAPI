@@ -10,10 +10,14 @@ import { fetchText } from './http.js';
 import { isBudgetExhausted } from '../utils/resolvers.js';
 import { resolveTargetEpisodes } from '../utils/dle-extractor.js';
 import { getTmdbTitles } from '../utils/metadata.js';
+import { createCache } from '../utils/cache.js';
 
 const BASE_URL = "https://sekai.one";
 const BUDGET_MS = 40000;
-const CACHE_TTL = 300000; // 5 min pour le cache des séries
+const CACHE_TTL = 300000; // 5 min
+
+// Cache partagé (remplace les Maps slugsCache + sagaPageCache)
+const withCache = createCache('sk', 'Sekai');
 
 // Slug alternatif pour les séries dont le slug sekai diffère du toSlug()
 const SLUG_OVERRIDES = {
@@ -23,7 +27,14 @@ const SLUG_OVERRIDES = {
   'dr stone': 'drstone',
   're-zero': 'rezero',
   're zero': 'rezero',
+  're:zero': 'rezero',
+  're:zero kara hajimeru isekai seikatsu': 'rezero',
   'jojos-bizarre-adventure': 'jojo',
+  'jojo no kimyou na bouken': 'jojo',
+  'jojos': 'jojo',
+  'ghost in the shell': 'ghost',
+  'black clover': 'black',
+  'black': 'black',
 };
 
 function toSekaiSlug(title) {
@@ -59,51 +70,43 @@ function scoreMatch(searchTerm, candidate) {
     return 0;
 }
 
-let slugsCache = null;
-let slugsCacheTs = 0;
-
 /**
  * Parse episodesData.js pour obtenir les slugs de séries actifs.
  * episodesData.js = window.episodesData = { op: {lastEpisode:1168,...}, drstone: {...}, ... }
+ * Cache partagé via createCache('sk') — TTL 5min succès, 30s échec.
  */
 async function getSeriesSlugs() {
-    if (slugsCache && Date.now() - slugsCacheTs < CACHE_TTL) {
-        return slugsCache;
-    }
+    return withCache('series_slugs_from_api', async () => {
+        try {
+            const js = await fetchText(`${BASE_URL}/episodesData.js`);
+            // Extrait les clés de l'objet: { op: { ... }, drstone: { ... }, ... }
+            const slugKeys = [];
+            const slugRegex = /^\s*([a-zA-Z0-9_]+)\s*:\s*\{/gm;
+            let match;
+            while ((match = slugRegex.exec(js)) !== null) {
+                const key = match[1];
+                if (!slugKeys.includes(key)) slugKeys.push(key);
+            }
 
-    try {
-        const js = await fetchText(`${BASE_URL}/episodesData.js`);
-        // Extrait les clés de l'objet: { op: { ... }, drstone: { ... }, ... }
-        // Important: ne matcher que les clés dont la valeur est { (objet) pour éviter
-        // de capturer lastEpisode, date, time etc.
-        const slugKeys = [];
-        const slugRegex = /^\s*([a-zA-Z0-9_]+)\s*:\s*\{/gm;
-        let match;
-        while ((match = slugRegex.exec(js)) !== null) {
-            const key = match[1];
-            if (!slugKeys.includes(key)) slugKeys.push(key);
+            // Construire les données de séries (slug → URL)
+            const results = [];
+            for (const key of slugKeys) {
+                // "op" → "piece" (One Piece), autres slugs directement
+                const urlSlug = (key === 'op') ? 'piece' : key;
+                results.push({
+                    title: key,          // nom interne (op, drstone)
+                    url: `${BASE_URL}/${urlSlug}`,
+                    slug: urlSlug,       // slug URL réel
+                });
+            }
+
+            console.log(`[Sekai] Loaded ${results.length} series slugs from episodesData.js`);
+            return results;
+        } catch (e) {
+            console.error(`[Sekai] Failed to parse episodesData.js: ${e.message}`);
+            return [];
         }
-
-        // Construire les données de séries (slug → URL)
-        const results = [];
-        for (const key of slugKeys) {
-            // "op" → "piece" (One Piece), autres slugs directement
-            const urlSlug = (key === 'op') ? 'piece' : key;
-            results.push({
-                title: key,          // nom interne (op, drstone)
-                url: `${BASE_URL}/${urlSlug}`,
-                slug: urlSlug,       // slug URL réel
-            });
-        }
-
-        slugsCache = results;
-        slugsCacheTs = Date.now();
-        console.log(`[Sekai] Loaded ${results.length} series slugs from episodesData.js`);
-        return results;
-    } catch (e) {
-        console.error(`[Sekai] Failed to parse episodesData.js: ${e.message}`);
-        return [];
-    }
+    }, { successTtl: CACHE_TTL });
 }
 
 /**
@@ -209,28 +212,18 @@ async function getSeriesData() {
 
 /**
  * Récupère la page d'une saga et parse les épisodes.
- * Cache la page pour éviter de re-fetcher les mêmes sagas.
+ * Cache partagé via createCache('sk') — TTL 5min succès, 30s échec.
+ * Remplace l'ancien sagaPageCache Map + gestion manuelle TTL.
  */
-const sagaPageCache = new Map();
-const sagaPageCacheTTL = 300000; // 5 min
-
 async function fetchSagaPage(sagaUrl) {
-    const cached = sagaPageCache.get(sagaUrl);
-    if (cached && Date.now() - cached.ts < sagaPageCacheTTL) {
-        return cached.html;
-    }
-
-    try {
-        const html = await fetchText(sagaUrl);
-        if (html && html.length > 1000) {
-            // Nettoyer le cache s'il devient trop grand
-            if (sagaPageCache.size > 50) sagaPageCache.clear();
-            sagaPageCache.set(sagaUrl, { html, ts: Date.now() });
+    return withCache(`saga_page_${sagaUrl}`, async () => {
+        try {
+            const html = await fetchText(sagaUrl);
+            return (html && html.length > 1000) ? html : '';
+        } catch (e) {
+            return '';
         }
-        return html || '';
-    } catch (e) {
-        return '';
-    }
+    }, { successTtl: CACHE_TTL });
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episodeNum) {
@@ -245,54 +238,83 @@ export async function extractStreams(tmdbId, mediaType, season, episodeNum) {
 
     console.log(`[Sekai] Checking ${mediaType} S${season} E${episodeNum} -> Absolute: ${absEp}`);
 
-    // 1. Générer le slug sekai et construire l'URL de la série
+    // 1. Générer le slug sekai depuis le premier titre TMDB
+    //    Si le slug principal échoue, on essaie tous les titres alternatifs
     const slug = toSekaiSlug(titles[0]);
-    const seriesUrl = `${BASE_URL}/${slug}`;
+    let seriesUrl = `${BASE_URL}/${slug}`;
 
     // 2. Fetch la page série pour trouver les sagas
     let mainHtml = '';
     try {
         mainHtml = await fetchText(seriesUrl);
     } catch (e) {
-        console.log(`[Sekai] Series page not found at ${seriesUrl}, trying slugs fallback...`);
+        console.log(`[Sekai] Series page not found at ${seriesUrl}`);
     }
 
-    // Fallback: si la page série n'est pas trouvée, essayer les slugs connus
+    // 3. Si le slug principal échoue, essayer les titres alternatifs (ex: titre EN vs FR)
     if (mainHtml.length < 5000) {
-        const allSeries = await getSeriesData();
-        for (const s of allSeries) {
-            if (isBudgetExhausted(startTime, BUDGET_MS)) break;
+        for (const altTitle of titles.slice(1)) {
+            if (!altTitle || isBudgetExhausted(startTime, BUDGET_MS)) break;
+            const altSlug = toSekaiSlug(altTitle);
+            if (altSlug === slug) continue; // même slug, déjà essayé
 
-            // Vérifier si le titre match avec un slug connu
-            for (const t of titles) {
-                if (!t) continue;
-                const nt = normalizeTitle(t);
-                const ns = normalizeTitle(s.slug);
-                const score = scoreMatch(nt, ns);
-                if (score >= 70) {
-                    try {
-                        mainHtml = await fetchText(s.url);
-                        console.log(`[Sekai] Fallback matched: ${s.url}`);
-                    } catch (e) { /* ignore */ }
+            const altUrl = `${BASE_URL}/${altSlug}`;
+            try {
+                mainHtml = await fetchText(altUrl);
+                if (mainHtml.length >= 5000) {
+                    seriesUrl = altUrl;
+                    console.log(`[Sekai] Alternative title matched: "${altTitle}" → ${altUrl}`);
                     break;
                 }
-            }
-
-            if (mainHtml.length >= 5000) break;
+            } catch (e) { /* ignore */ }
         }
+    }
 
-        if (mainHtml.length < 5000) {
-            // Dernier recours: essayer tous les slugs connus
+    // 4. Fallback: si toujours rien, essayer les slugs connus depuis episodesData.js
+    if (mainHtml.length < 5000) {
+        const allSeries = await getSeriesData();
+        if (allSeries.length > 0) {
+            console.log(`[Sekai] Trying fallback across ${allSeries.length} known slugs...`);
+
+            // Étape A: score matching entre les titres TMDB et les slugs connus
             for (const s of allSeries) {
                 if (isBudgetExhausted(startTime, BUDGET_MS)) break;
-                if (s.url === seriesUrl) continue;
-                try {
-                    mainHtml = await fetchText(s.url);
-                    if (mainHtml.length >= 5000) {
-                        console.log(`[Sekai] Fallback matched (all slugs): ${s.url}`);
+
+                for (const t of titles) {
+                    if (!t) continue;
+                    const nt = normalizeTitle(t);
+                    const ns = normalizeTitle(s.slug);
+                    const score = scoreMatch(nt, ns);
+                    if (score >= 70) {
+                        try {
+                            mainHtml = await fetchText(s.url);
+                            if (mainHtml.length >= 5000) {
+                                seriesUrl = s.url;
+                                console.log(`[Sekai] Fallback (score): ${s.url}`);
+                            }
+                        } catch (e) { /* ignore */ }
                         break;
                     }
-                } catch (e) { /* ignore */ }
+                }
+
+                if (mainHtml.length >= 5000) break;
+            }
+
+            // Étape B: dernier recours — essayer TOUS les slugs connus
+            if (mainHtml.length < 5000) {
+                for (const s of allSeries) {
+                    if (isBudgetExhausted(startTime, BUDGET_MS)) break;
+                    const sUrl = `${BASE_URL}/${s.slug}`;
+                    if (sUrl === seriesUrl) continue;
+                    try {
+                        mainHtml = await fetchText(sUrl);
+                        if (mainHtml.length >= 5000) {
+                            seriesUrl = sUrl;
+                            console.log(`[Sekai] Fallback (brute): ${sUrl}`);
+                            break;
+                        }
+                    } catch (e) { /* ignore */ }
+                }
             }
         }
 

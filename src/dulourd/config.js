@@ -1,5 +1,6 @@
 export const CONFIG = {
   BASE_URL: 'https://www.dulourd.hair',
+  DOMAINS: ['https://www.dulourd.hair', 'https://www.dulourd.net'],
   TIMEOUTS: {
     HEAD: 10000,
     PAGE: 20000,

@@ -1,25 +1,19 @@
 import { fetchText, fetchJson } from './http.js';
 import cheerio from 'cheerio-without-node-native';
 import { resolveStream, sortStreamsByLanguage, sleep, fetchWithRetry } from '../utils/resolvers.js';
-import { resolveTargetEpisodes } from '../utils/dle-extractor.js';
+import { resolveTargetEpisodes, toSlug } from '../utils/dle-extractor.js';
 import { getTmdbTitles } from '../utils/metadata.js';
+import { createCache } from '../utils/cache.js';
 
 const BASE_URL = "https://animoflix.to";
 const SEARCH_URL = `${BASE_URL}/search-autocomplete.php`;
 const TIMEOUT = 25000;
 
 const SPECIAL_SLUG_RE = /(?:ona|oav|film|movie|special|scan|chapitre|volume|dub|uncut)(?:-|$)/i;
-const MAX_TITLE_SEARCHES = 10;
+const MAX_TITLE_SEARCHES = 6;
 
-// Cache TTL pour AnimoFlix (5 minutes)
-const ANF_CACHE_TTL = 5 * 60 * 1000;
-const anfCache = new Map();
-
-function anfCached(key, fn) {
-  const now = Date.now();
-  if (anfCache.has(key) && now - anfCache.get(key).ts < ANF_CACHE_TTL) return anfCache.get(key).data;
-  return fn().then(data => { anfCache.set(key, { data, ts: now }); return data; });
-}
+// Cache partagé LRU avec TTL auto (5min succès, 30s échecs)
+const withCache = createCache('af', 'AnimoFlix')
 
 async function searchAnime(title) {
     try {
@@ -66,8 +60,31 @@ async function searchAnime(title) {
         }
         if (results.length > 0) return results;
     } catch (e) {
-        console.warn(`[AnimoFlix] Search HTML fallback also failed: ${e.message}`);
+        console.warn(`[AnimoFlix] Search HTML fallback failed: ${e.message}`);
     }
+
+    // Step 3: Fallback — slug probing direct
+    // La search API peut échouer sur certains titres (surtout les longs titres japonais).
+    // On génère un slug depuis le titre TMDB et on teste l'URL directement.
+    const slug = toSlug(title)
+    if (slug && slug.length > 3) {
+      const slugUrl = `${BASE_URL}/anime/${slug}/`
+      try {
+        const slugHtml = await fetchText(slugUrl, { timeout: 8000 })
+        if (slugHtml && slugHtml.length > 1000) {
+          console.log(`[AnimoFlix] Slug probing match: ${slugUrl}`)
+          return [{
+            title: slug.replace(/-/g, ' '),
+            title2: title,
+            slug: slug,
+            url: slugUrl
+          }]
+        }
+      } catch (e) {
+        // slug not found, continue
+      }
+    }
+
     return [];
 }
 
@@ -238,7 +255,7 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
     const slug = bestMatch.slug;
     console.log(`[AnimoFlix] Matched: "${bestMatch.title}" (slug: ${slug})`);
 
-    const animeDetailHtml = await anfCached(`serie_${slug}`, () =>
+    const animeDetailHtml = await withCache(`serie_${slug}`, () =>
       fetchWithRetry(() => fetchText(`${BASE_URL}/anime/${slug}/`, { timeout: TIMEOUT }))
     );
     const $ = cheerio.load(animeDetailHtml);
@@ -329,7 +346,7 @@ async function _extractStreams(tmdbId, mediaType, season, episode) {
             ? targetSeason.href
             : `${BASE_URL}${targetSeason.href.startsWith('/') ? '' : '/'}${targetSeason.href}`;
 
-        const seasonHtml = await anfCached(`season_${slug}_${targetSeason.seasonNum}`, () =>
+        const seasonHtml = await withCache(`season_${slug}_${targetSeason.seasonNum}`, () =>
           fetchWithRetry(() => fetchText(seasonPageUrl, { timeout: TIMEOUT }))
         );
         const $s = cheerio.load(seasonHtml);

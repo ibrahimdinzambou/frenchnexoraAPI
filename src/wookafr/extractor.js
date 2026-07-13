@@ -1,26 +1,20 @@
-import { fetchText, postForm } from './http.js'
+import { fetchText, postForm, fetchJson } from './http.js'
 import cheerio from 'cheerio-without-node-native'
 import { resolveStream, safeFetch, withTimeout } from '../utils/resolvers.js'
 import { getTmdbTitles } from '../utils/metadata.js'
 import { toStream, toSlug, normalize, resolveTargetEpisodes } from '../utils/dle-extractor.js'
 import {
-  SITE, ENDPOINTS, SELECTORS, PATTERNS, TIMEOUTS, SCORES,
+  SITE, SELECTORS, PATTERNS, TIMEOUTS, SCORES,
   LANGUAGE_MAP, ANIME_GENRE_ID, ANIME_KEYWORDS,
-  CACHE_TTL, MAX_CANDIDATES, MAX_SEARCH_TITLES,
+  MAX_CANDIDATES, MAX_SEARCH_TITLES,
+  CACHE_NAMESPACE, CACHE_TAG,
 } from './config.js'
+import { createCache } from '../utils/cache.js'
 
-
+const withCache = createCache(CACHE_NAMESPACE, CACHE_TAG)
 
 function isJapanese(text) {
   return /[\u3000-\u9FFF\uF900-\uFAFF]/.test(text || '')
-}
-
-const CACHE = new Map()
-
-function cached(key, fn) {
-  const now = Date.now()
-  if (CACHE.has(key) && now - CACHE.get(key).ts < CACHE_TTL) return CACHE.get(key).data
-  return fn().then(data => { CACHE.set(key, { data, ts: now }); return data })
 }
 
 function scoreMatch(resultTitle, searchTitle) {
@@ -152,7 +146,7 @@ async function fetchTmdbGenre(tmdbId, mediaType) {
 
 async function detectSubType(tmdbId, mediaType, titles) {
   try {
-    const details = await cached(`tmdb_${tmdbId}_${mediaType}`, () => fetchTmdbGenre(tmdbId, mediaType))
+    const details = await withCache(`tmdb_${tmdbId}_${mediaType}`, () => fetchTmdbGenre(tmdbId, mediaType), { successTtl: 300000, failureTtl: 60000 })
     if (!details) return null
     const genres = (details.genres || []).map(g => g.id)
     const isAnim = genres.includes(ANIME_GENRE_ID)
@@ -194,7 +188,10 @@ async function trySearch(titles) {
   }
   const slugMatch = await trySlugFallback(titles[0], 'movie')
   if (slugMatch) { console.log(`[Wookafr] Found via slug: ${slugMatch.url}`); return slugMatch }
-  return null
+
+  // Dernier recours : WP REST API
+  console.log('[Wookafr] Trying WP API search...')
+  return await searchViaWpApi(titles[0], 'movie')
 }
 
 async function trySearchSeries(titles) {
@@ -235,12 +232,58 @@ async function trySearchSeries(titles) {
   // Try slug fallback before using general results (which may be wrong movies)
   const slugMatch = await trySlugFallback(titles[0], 'series', 0)
   if (slugMatch) { console.log(`[Wookafr] Found series via slug: ${slugMatch.url}`); return slugMatch }
-  // Only fall back to general (movie) results if slug failed
-  // This avoids matching a movie page for a series anime
-  return null
+
+  // Dernier recours : WP REST API
+  console.log('[Wookafr] Trying WP API search...')
+  return await searchViaWpApi(titles[0], 'tv')
 }
 
 
+/**
+ * Fallback : cherche via l'API REST WordPress (/wp-json/v2/posts?search=...)
+ * pour trouver l'URL exacte quand la recherche par slug échoue.
+ */
+async function searchViaWpApi(query, mediaType) {
+  const searchQuery = encodeURIComponent(query);
+  console.log(`[Wookafr] WP API search: "${query}"`);
+
+  // Chemins relatifs — fetchText/fetchJson gèrent le fallback multi-domain
+  const apiPath = `/wp-json/v2/posts?search=${searchQuery}&per_page=10`;
+  const posts = await fetchJson(apiPath, { timeout: TIMEOUTS.SEARCH });
+  if (!posts || !Array.isArray(posts) || posts.length === 0) {
+    console.log(`[Wookafr] No WP API results for "${query}"`);
+    return null;
+  }
+
+  console.log(`[Wookafr] WP API: ${posts.length} post(s) found`);
+
+  for (const post of posts) {
+    const slug = post.slug || '';
+    const title = (post.title?.rendered || '').toLowerCase();
+    const queryLower = query.toLowerCase();
+    const isRelevant = title.includes(queryLower) || slug.includes(toSlug(query));
+    if (!isRelevant) continue;
+
+    // Essayer film puis série
+    const probePaths = [
+      `/streaming/${slug}/`,
+      `/streaming/series/${slug}/`,
+    ];
+
+    for (const p of probePaths) {
+      const html = await fetchText(p, { timeout: TIMEOUTS.SEARCH });
+      if (html && html.length > 200) {
+        const iframeUrl = extractIframeUrl(html);
+        if (iframeUrl) {
+          console.log(`[Wookafr] WP search found: ${p}`);
+          const isSeries = p.includes('/series/');
+          return { url: p, title: post.title?.rendered || slug, isSeries };
+        }
+      }
+    }
+  }
+  return null;
+}
 
 async function probeSlug(slug, type, domain) {
   const path = type === 'series' ? `/streaming/series/${slug}/` : `/streaming/${slug}/`

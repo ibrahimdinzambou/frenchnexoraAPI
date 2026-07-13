@@ -1,5 +1,7 @@
-import { safeFetch } from '../utils/resolvers.js';
+import { safeFetch, sleep } from '../utils/resolvers.js';
 import { CONFIG } from './config.js';
+
+const RETRY_DELAYS = [1000, 2000, 4000];
 
 export const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
@@ -8,32 +10,89 @@ export const HEADERS = {
   Referer: `${CONFIG.BASE_URL}/`,
 };
 
-export async function fetchText(url, options = {}) {
-  console.log(`[DuLourd] Fetching: ${url}`);
+function isCloudflareBlock(text) {
+  if (!text) return false;
+  return text.includes('error code: 1010') ||
+         text.includes('cf-browser-verification') ||
+         text.includes('Just a moment') ||
+         text.includes('Checking your browser');
+}
+
+async function fetchFromDomain(domain, path, options = {}) {
+  const url = (path && (path.startsWith('http://') || path.startsWith('https://')))
+    ? path
+    : `${domain}${path}`;
   const { headers: customHeaders, ...rest } = options;
-  const res = await safeFetch(url, {
-    headers: { ...HEADERS, ...(customHeaders || {}) },
-    ...rest,
-  });
-  if (!res || !res.ok) {
-    const status = res && typeof res.status === 'number' ? res.status : 'no-response';
-    throw new Error(`HTTP error ${status} for ${url}`);
+  const retries = options.retries ?? 1;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await safeFetch(url, {
+        headers: { ...HEADERS, ...(customHeaders || {}) },
+        timeout: options.timeout ?? CONFIG.TIMEOUTS.PAGE,
+        ...rest,
+      });
+
+      if (!res) {
+        console.log(`[DuLourd] No response from ${domain} (attempt ${attempt + 1})`);
+        if (attempt < retries) await sleep(RETRY_DELAYS[attempt] || 2000);
+        continue;
+      }
+
+      const text = await res.text();
+
+      if (isCloudflareBlock(text)) {
+        console.log(`[DuLourd] Cloudflare block on ${domain} (attempt ${attempt + 1})`);
+        if (attempt < retries) await sleep(RETRY_DELAYS[attempt] || 2000);
+        continue;
+      }
+
+      if (!res.ok) {
+        const status = typeof res.status === 'number' ? res.status : 'no-response';
+        if (status === 404) return '';
+        console.log(`[DuLourd] HTTP ${status} on ${domain}`);
+        if (attempt < retries) await sleep(RETRY_DELAYS[attempt] || 2000);
+        continue;
+      }
+
+      return text;
+    } catch (e) {
+      console.log(`[DuLourd] Error on ${domain} (attempt ${attempt + 1}): ${e.message}`);
+      if (attempt < retries) await sleep(RETRY_DELAYS[attempt] || 2000);
+    }
   }
-  return await res.text();
+  return null;
+}
+
+export async function fetchText(urlOrPath, options = {}) {
+  const domains = [CONFIG.BASE_URL, ...(CONFIG.DOMAINS || [])];
+  for (const domain of domains) {
+    const result = await fetchFromDomain(domain, urlOrPath, options);
+    if (result) return result;
+  }
+  throw new Error(`[DuLourd] All domains failed for ${urlOrPath}`);
 }
 
 export async function fetchApi(id, xfield) {
-  const url = CONFIG.BASE_URL + CONFIG.ENDPOINTS.seasonApi;
-  console.log(`[DuLourd] API call: id=${id} xfield=${xfield}`);
-  const res = await safeFetch(url, {
-    method: 'POST',
-    headers: {
-      ...HEADERS,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: `id=${id}&xfield=${xfield}&action=playEpisode`,
-    timeout: CONFIG.TIMEOUTS.API,
-  });
-  if (!res || !res.ok) return null;
-  return await res.text();
+  const body = `id=${id}&xfield=${xfield}&action=playEpisode`;
+  for (const domain of [CONFIG.BASE_URL, ...(CONFIG.DOMAINS || [])]) {
+    const url = `${domain}${CONFIG.ENDPOINTS.seasonApi}`;
+    try {
+      const res = await safeFetch(url, {
+        method: 'POST',
+        headers: {
+          ...HEADERS,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body,
+        timeout: CONFIG.TIMEOUTS.API,
+      });
+      if (!res || !res.ok) continue;
+      const text = await res.text();
+      if (text && !isCloudflareBlock(text)) return text;
+    } catch (e) {
+      console.log(`[DuLourd] API error on ${domain}: ${e.message}`);
+    }
+  }
+  return null;
 }

@@ -2,11 +2,12 @@ import cheerio from 'cheerio-without-node-native'
 import { fetchText, postSearch } from './http.js'
 import { getTmdbTitles } from '../utils/metadata.js'
 import {
-  normalize, cached, scoreMatch, resolveWithTimeout, detectSubType, toStream, parseAvailableSeasons, stripSeasonSuffix, resolveTargetEpisodes,
+  normalize, scoreMatch, resolveWithTimeout, detectSubType, toStream, parseAvailableSeasons, stripSeasonSuffix, resolveTargetEpisodes,
 } from '../utils/dle-extractor.js'
+import { createCache } from '../utils/cache.js'
 import {
   SITE, PATTERNS, TIMEOUTS, SCORES,
-  CACHE_TTL, MAX_SEARCH_TITLES,
+  MAX_SEARCH_TITLES,
 } from './config.js'
 
 /**
@@ -307,7 +308,7 @@ async function trySearchQuery(query, isFallback = false, originalTitles = null) 
   if (results.length === 0) return null
 
   let scored = results
-    .map(r => ({ ...r, score: scoreMatch(r.title, query, SCORES) }))
+    .map(r => ({ ...r, score: scoreMatch(r.title, query, SCORES) + getSpinoffPenalty(r.title) }))
     .filter(r => r.score >= SCORES.MIN_MATCH)
     .sort((a, b) => b.score - a.score)
 
@@ -348,8 +349,24 @@ async function trySearchQuery(query, isFallback = false, originalTitles = null) 
 
 const SEASON_PATTERN = /\/saison-(\d+)\//g
 
+// Cache partagé LRU avec TTL auto (5min succès, 30s échecs)
+const withCache = createCache('vr', 'VoiranimeRip')
+
+/** Mots-clés de spin-off : ces titres sont pénalisés car ils ne contiennent
+ *  pas les épisodes de la série principale (ex: "Junior High School", "Chibi") */
+const SPINOFF_KEYWORDS = ['fan letter', 'log:', 'memories', 'vigilante', 'illegals', 'film', 'movie', 'special', 'oav', 'ona', 'x ut', 'collab', 'junior high', 'chibi', 'super deformed']
+
+/**
+ * Calcule une pénalité si le titre est un spin-off.
+ * Retourne 0 si ce n'est pas un spin-off, -50 si c'en est un.
+ */
+function getSpinoffPenalty(title) {
+  const t = (title || '').toLowerCase()
+  return SPINOFF_KEYWORDS.some(k => t.includes(k)) ? -50 : 0
+}
+
 async function detectSubTypeCached(tmdbId, mediaType) {
-  return cached(`tmdb_subtype_${tmdbId}_${mediaType}`, () => detectSubType(tmdbId, mediaType), CACHE_TTL)
+  return withCache(`tmdb_subtype_${tmdbId}_${mediaType}`, () => detectSubType(tmdbId, mediaType))
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {

@@ -2,6 +2,7 @@ import { fetchText, BASE } from './http.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 import { resolveStream, safeJson } from '../utils/resolvers.js';
 import { normalize } from '../utils/dle-extractor.js';
+import { createCache } from '../utils/cache.js';
 
 function extractPushContent(html) {
     const chunks = [];
@@ -318,66 +319,69 @@ function collectStreamsForLang(saison, lang, episodeIndex, seasonName) {
     });
 }
 
-const slugCache = {};
-const animeDataCache = {};
+// Cache partagé LRU avec TTL auto (5min succès, 30s échecs)
+// slugCache: slug des animes par titre TMDB (multi-clés, lookup rapide)
+const slugCache = createCache('mg_slug', 'MugiwaraSlug');
+// animeDataCache: données extraites des pages Next.js par slug+type (fetch intensif)
+const animeDataCache = createCache('mg_data', 'MugiwaraData');
 
 async function findCachedSlug(titles) {
+    // Chaque titre TMDB peut correspondre à un slug différent.
+    // On vérifie si l'un des titres est déjà en cache.
     for (const t of titles) {
-        if (slugCache[t]) return slugCache[t];
+        const slug = await slugCache(`slug_${t.toLowerCase()}`, async () => {
+            // Cache miss pour ce titre → fetch le slug via findSlug
+            const found = await findSlug(titles);
+            // Pré-cacher sous TOUS les titres (même null) pour éviter les appels redondants
+            for (const other of titles) {
+                if (other.toLowerCase() !== t.toLowerCase()) {
+                    await slugCache(`slug_${other.toLowerCase()}`, async () => found);
+                }
+            }
+            return found;
+        });
+        if (slug) return slug;
     }
-    const slug = await findSlug(titles);
-    if (slug) {
-        for (const t of titles) {
-            if (!slugCache[t]) slugCache[t] = slug;
-        }
-    }
-    return slug;
+    return null;
 }
 
 async function getAnimeData(slug, mediaType) {
     const cacheKey = slug + ':' + mediaType;
-    if (animeDataCache[cacheKey]) {
-        console.log(`[Mugiwara] Cache hit for ${cacheKey}`);
-        return animeDataCache[cacheKey];
-    }
+    return animeDataCache(cacheKey, async () => {
+        const pageUrl = mediaType === 'movie'
+            ? `${BASE}/catalogue/${slug}/films`
+            : `${BASE}/catalogue/${slug}/episodes/saison1`;
 
-    const pageUrl = mediaType === 'movie'
-        ? `${BASE}/catalogue/${slug}/films`
-        : `${BASE}/catalogue/${slug}/episodes/saison1`;
-
-    let pageHtml;
-    try {
-        pageHtml = await fetchText(pageUrl);
-    } catch (e) {
-        if (mediaType !== 'movie') {
-            const probes = [];
-            for (let s = 2; s <= 20; s++) {
-                probes.push(
-                    fetchText(`${BASE}/catalogue/${slug}/episodes/saison${s}`)
-                        .then(html => ({ html }))
-                        .catch(() => null)
-                );
-            }
-            const settled = await Promise.allSettled(probes);
-            for (const r of settled) {
-                if (r.status === 'fulfilled' && r.value) {
-                    pageHtml = r.value.html;
-                    break;
+        let pageHtml;
+        try {
+            pageHtml = await fetchText(pageUrl);
+        } catch (e) {
+            if (mediaType !== 'movie') {
+                const probes = [];
+                for (let s = 2; s <= 20; s++) {
+                    probes.push(
+                        fetchText(`${BASE}/catalogue/${slug}/episodes/saison${s}`)
+                            .then(html => ({ html }))
+                            .catch(() => null)
+                    );
+                }
+                const settled = await Promise.allSettled(probes);
+                for (const r of settled) {
+                    if (r.status === 'fulfilled' && r.value) {
+                        pageHtml = r.value.html;
+                        break;
+                    }
                 }
             }
         }
-    }
 
-    if (!pageHtml) {
-        console.log(`[Mugiwara] No page found for ${cacheKey}`);
-        return null;
-    }
+        if (!pageHtml) {
+            console.log(`[Mugiwara] No page found for ${cacheKey}`);
+            return null;
+        }
 
-    const animeData = extractAnimeServerData(pageHtml);
-    if (animeData) {
-        animeDataCache[cacheKey] = animeData;
-    }
-    return animeData;
+        return extractAnimeServerData(pageHtml) || null;
+    });
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episodeNum) {

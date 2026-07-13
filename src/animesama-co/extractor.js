@@ -2,12 +2,37 @@ import cheerio from 'cheerio-without-node-native'
 import { fetchText, postSearch } from './http.js'
 import { getTmdbTitles } from '../utils/metadata.js'
 import {
-  normalize, cached, scoreMatch, resolveWithTimeout, detectSubType, toStream, parseAvailableSeasons, stripSeasonSuffix, resolveTargetEpisodes,
+  normalize, scoreMatch, resolveWithTimeout, detectSubType, toStream, parseAvailableSeasons, stripSeasonSuffix, resolveTargetEpisodes,
 } from '../utils/dle-extractor.js'
 import {
   SITE, PATTERNS, TIMEOUTS, SCORES,
-  CACHE_TTL, MAX_SEARCH_TITLES,
+  MAX_SEARCH_TITLES,
 } from './config.js'
+
+// Mots-clés de spin-offs à pénaliser dans le score matching
+const SPINOFF_KEYWORDS = [
+  'junior high', 'junior-high', 'chibi', 'spin.?off',
+  'special', 'ona', 'ova', 'mini', 'gaiden',
+  'side story', 'side.?story',
+]
+
+/**
+ * Calcule une penalite pour les resultats de type spin-off/derive.
+ * Retourne un score negatif a soustraire du score de matching.
+ * Permet d'eviter que "L'Attaque des Titans - Junior High School"
+ * soit selectionne a la place du vrai "L'Attaque des Titans".
+ */
+function getSpinoffPenalty(title) {
+  if (!title) return 0
+  const lower = title.toLowerCase()
+  let penalty = 0
+  for (const kw of SPINOFF_KEYWORDS) {
+    if (new RegExp(kw, 'i').test(lower)) {
+      penalty += 60
+    }
+  }
+  return penalty
+}
 
 /**
  * Generate short fallback queries from titles for sites whose search engine
@@ -125,7 +150,9 @@ async function searchAnime(titles) {
 
       let best = null, bestScore = 0
       for (const r of results) {
-        const score = scoreMatch(r.title, title, SCORES)
+        const rawScore = scoreMatch(r.title, title, SCORES)
+        const penalty = getSpinoffPenalty(r.title)
+        const score = rawScore - penalty
         if (score > bestScore) { bestScore = score; best = r }
       }
 
@@ -140,30 +167,40 @@ async function searchAnime(titles) {
 
   // Fallback: try short keyword queries (the site's search engine
   // often fails on long/exact titles but works with short distinctive words)
+  // Collecte TOUS les resultats de TOUTES les requetes fallback avant de
+  // choisir le meilleur score — evite de retourner prematurement sur le
+  // premier match (ex: "Titan" -> "La derniere attaque" au lieu du vrai AoT).
   console.log(`[AnimeSamaCo] Search failed for all titles, trying short fallback queries...`)
   const fallbackQueries = generateFallbackQueries(titles)
+  const allCandidates = []  // [{ candidate: result, score: number }]
+
   for (const query of fallbackQueries) {
     try {
       const html = await postSearch(query, { timeout: TIMEOUTS.SEARCH })
       const results = parseSearchResults(html)
       if (results.length === 0) continue
 
-      let best = null, bestScore = 0
       for (const r of results) {
         for (const title of titles.slice(0, MAX_SEARCH_TITLES)) {
           const cleanTitle = stripSeasonSuffix(title)
-          const score = scoreMatch(r.title, cleanTitle, SCORES)
-          if (score > bestScore) { bestScore = score; best = r }
+          const rawScore = scoreMatch(r.title, cleanTitle, SCORES)
+          const penalty = getSpinoffPenalty(r.title)
+          const score = rawScore - penalty
+          allCandidates.push({ candidate: r, score })
         }
-      }
-
-      // Fallback queries use MIN_MATCH since short keywords can't reach EXACT_MATCH
-      if (best && bestScore >= SCORES.MIN_MATCH) {
-        console.log(`[AnimeSamaCo] Fallback query "${query}" matched: "${best.title}" (id: ${best.animeId}) score: ${bestScore}`)
-        return best
       }
     } catch (e) {
       console.warn(`[AnimeSamaCo] Fallback query "${query}" failed: ${e.message}`)
+    }
+  }
+
+  // Trier par score descendant et prendre le meilleur
+  if (allCandidates.length > 0) {
+    allCandidates.sort((a, b) => b.score - a.score)
+    const best = allCandidates[0]
+    if (best.score >= SCORES.MIN_MATCH) {
+      console.log(`[AnimeSamaCo] Fallback best: "${best.candidate.title}" (id: ${best.candidate.animeId}) score: ${best.score}`)
+      return best.candidate
     }
   }
 
@@ -171,7 +208,8 @@ async function searchAnime(titles) {
 }
 
 async function detectSubTypeCached(tmdbId, mediaType) {
-  return cached(`tmdb_subtype_${tmdbId}_${mediaType}`, () => detectSubType(tmdbId, mediaType), CACHE_TTL)
+  // detectSubType a deja son propre cache interne (cached() dans dle-extractor avec 5min TTL)
+  return detectSubType(tmdbId, mediaType)
 }
 
 const SEASON_PATTERN = /\/saison-(\d+)\.html/g
@@ -216,6 +254,52 @@ async function extractSeries(tmdbId, mediaType, titles, season, episode, subType
     return directResult
   }
   console.log(`[AnimeSamaCo] Direct season S${targetSeasonNum}E${targetEpisodeNums[0]} failed, trying fallback...`)
+
+  // Step 1.5: Si le match est un spin-off (ex: "Junior High School"),
+  // vérifier si sa page contient un lien vers la série parente
+  // et l'utiliser comme match de fallback.
+  if (getSpinoffPenalty(match.title) > 0) {
+    console.log(`[AnimeSamaCo] Match is a spin-off, checking for parent series link...`)
+    try {
+      const matchPageHtml = await fetchText(match.url, { timeout: TIMEOUTS.PAGE }).catch(() => '')
+      if (matchPageHtml) {
+        const $ = cheerio.load(matchPageHtml)
+        // Chercher un lien vers une série parente dans la page spin-off
+        // Filtre: le slug du lien doit partager au moins un mot significatif
+        // avec le titre du match (ex: "titan" dans "junior-high-school" et "lattaque-des-titans")
+        const matchSignificantWords = match.title.toLowerCase()
+          .split(/\s+/).filter(w => w.length > 3)
+        const parentLink = $('a[href*="/anime/"][href$=".html"]').filter((i, el) => {
+          const href = $(el).attr('href') || ''
+          if (href === match.url || href.includes(match.animeId)) return false
+          const slug = href.split('/').pop().replace('.html', '').replace(/\d+-/, '')
+          return matchSignificantWords.some(w => slug.includes(w))
+        }).first().attr('href')
+
+        if (parentLink) {
+          const parentUrl = parentLink.startsWith('http') ? parentLink : `${SITE.BASE_URL}${parentLink}`
+          const parentIdMatch = parentUrl.match(/\/anime\/(\d+)-/)
+          if (parentIdMatch && parentIdMatch[1] !== match.animeId) {
+            const parentSlugMatch = parentUrl.match(/\/anime\/\d+-([^/]+)\.html/)
+            console.log(`[AnimeSamaCo] Found parent series: ID ${parentIdMatch[1]}, trying instead...`)
+            const parentMatch = {
+              url: parentUrl,
+              animeId: parentIdMatch[1],
+              slug: parentSlugMatch ? parentSlugMatch[1] : match.slug,
+              title: `Parent of ${match.title}`,
+            }
+            const parentResult = await extractEpisodeStreams(parentMatch, targetSeasonNum, targetEpisodeNums[0], subType)
+            if (parentResult.length > 0) {
+              console.log(`[AnimeSamaCo] Parent series succeeded for S${targetSeasonNum}E${targetEpisodeNums[0]}`)
+              return parentResult
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[AnimeSamaCo] Parent series check failed: ${e.message}`)
+    }
+  }
 
   // Step 2: Fallback - scrape series page for available seasons
   try {

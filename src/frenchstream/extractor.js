@@ -3,6 +3,9 @@ import cheerio from 'cheerio-without-node-native';
 import { safeFetch, resolveStream, isBudgetExhausted } from '../utils/resolvers.js';
 import { getTmdbTitles } from '../utils/metadata.js';
 import { fetchText, fetchJson, BASE_URL, BASE_URLS } from './http.js';
+import { createCache } from '../utils/cache.js';
+
+const withCache = createCache('fs', 'FrenchStream');
 
 const MIN_MATCH_SCORE = 60;
 const MOVIE_MATCH_SCORE = 55;
@@ -32,13 +35,7 @@ const ALL_CATEGORIES = [
     '/films/thrillers/', '/films/westerns/', '/films/vf/', '/films/cultes/'
 ];
 
-const cache = new Map();
-
-function cached(key, fn) {
-    const now = Date.now();
-    if (cache.has(key) && now - cache.get(key).ts < CACHE_TTL_MS) return cache.get(key).data;
-    return fn().then(data => { cache.set(key, { data, ts: now }); return data; });
-}
+/* old cached() removed — all migrated to withCache */
 
 async function fetchTmdbJson(url) {
     const res = await safeFetch(url);
@@ -209,7 +206,7 @@ async function searchByTitle(title, mediaType, season) {
 async function getTmdbDetails(tmdbId, mediaType) {
     const type = mediaType === 'movie' ? 'movie' : 'tv';
     const url = TMDB_API_BASE + '/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=en-US';
-    return cached('tmdb_det_' + tmdbId + '_' + type, () => fetchTmdbJson(url));
+    return withCache('tmdb_det_' + tmdbId + '_' + type, () => fetchTmdbJson(url), { successTtl: CACHE_TTL_MS, failureTtl: 60000 });
 }
 
 async function detectSubType(tmdbId, mediaType, titles) {
@@ -269,19 +266,19 @@ function dedupeByUrl(streams) {
 async function fetchSeasons(tmdbId) {
     const tag = 's-' + tmdbId;
     const url = BASE_URL + '/engine/ajax/get_seasons.php?serie_tag=' + tag + '&news_id=0';
-    return cached('seasons_' + tmdbId, async () => {
+    return withCache('seasons_' + tmdbId, async () => {
         const data = await fetchJson(url, { baseUrl: BASE_URL });
         if (!Array.isArray(data)) return [];
         return data;
-    });
+    }, { successTtl: CACHE_TTL_MS, failureTtl: 60000 });
 }
 
 async function fetchEpisodeData(seasonNewsId) {
     const url = BASE_URL + '/data/eps_' + seasonNewsId + '.txt?v=' + Math.floor(Date.now() / 30000);
-    return cached('eps_' + seasonNewsId, async () => {
+    return withCache('eps_' + seasonNewsId, async () => {
         const data = await fetchJson(url, { baseUrl: BASE_URL });
         return data;
-    });
+    }, { successTtl: 30000, failureTtl: 10000 });
 }
 
 function collectTvSiteCandidates(epData, episode, subType) {
@@ -345,10 +342,10 @@ function parseCategoryMovies(html) {
 
 async function fetchCategoryMovies(catPath) {
     const url = BASE_URL + catPath;
-    return cached('cat_' + catPath.replace(/[\/\s]/g, '_'), async () => {
+    return withCache('cat_' + catPath.replace(/[\/\s]/g, '_'), async () => {
         const html = await fetchText(url, { timeout: CATEGORY_FETCH_TIMEOUT, baseUrl: BASE_URL });
         return parseCategoryMovies(html);
-    });
+    }, { successTtl: CACHE_TTL_MS, failureTtl: 60000 });
 }
 
 async function verifyAndExtractMovieStreams(newsId, tmdbId, subType) {
