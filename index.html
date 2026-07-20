@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nuvio — Lecteur FR</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23f2b35b'/%3E%3Cpath d='M12 8l12 8-12 8z'/%3E%3C/svg%3E">
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;600;700;800&display=swap');
+    :root { --ink:#eef2f4; --muted:#8996a2; --line:#26323c; --panel:#111b23; --bg:#081016; --gold:#f2b35b; --gold2:#ffdc91; --red:#eb735d; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:var(--bg); font-family:Manrope, sans-serif; min-height:100vh; overflow-x:hidden; }
+    body:before { content:""; position:fixed; inset:0; z-index:-2; background:radial-gradient(circle at 72% 6%, #29434b 0, transparent 31%), radial-gradient(circle at 3% 70%, #172c38 0, transparent 28%), linear-gradient(130deg,#071016 0%,#0b151c 64%,#101c20 100%); }
+    body:after { content:""; position:fixed; inset:0; z-index:-1; opacity:.11; pointer-events:none; background-image:linear-gradient(115deg,transparent 0 48%,#d9f0de 49%,transparent 50%),linear-gradient(20deg,transparent 0 48%,#d9f0de 49%,transparent 50%); background-size:80px 80px; mix-blend-mode:overlay; }
+    header { max-width:1240px; margin:auto; padding:30px 28px 18px; display:flex; align-items:center; justify-content:space-between; }
+    .brand { display:flex; align-items:center; gap:12px; font-weight:800; letter-spacing:-.04em; font-size:20px; }
+    .mark { width:34px; height:34px; display:grid; place-items:center; color:#111; background:var(--gold); clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%); font-size:14px; }
+    .status { color:var(--muted); font:12px 'DM Mono', monospace; display:flex; align-items:center; gap:8px; }
+    .status i { width:7px;height:7px;background:#75d995;border-radius:50%;box-shadow:0 0 14px #75d995; }
+    main { max-width:1240px; margin:auto; padding:28px; }
+    .eyebrow { color:var(--gold); text-transform:uppercase; letter-spacing:.18em; font:11px 'DM Mono',monospace; }
+    h1 { max-width:800px; margin:15px 0 12px; font-size:clamp(38px,6vw,76px); line-height:.98; letter-spacing:-.075em; }
+    .intro { color:var(--muted); max-width:580px; line-height:1.7; margin:0 0 28px; }
+    .control { padding:14px; background:rgba(17,27,35,.84); border:1px solid var(--line); border-radius:14px; display:grid; grid-template-columns:1.4fr .8fr .55fr .55fr auto; gap:9px; box-shadow:0 18px 50px #0005; }
+    input,select,button { font:inherit; border:0; outline:0; }
+    input,select { min-width:0; padding:14px 15px; color:var(--ink); background:#0a131a; border:1px solid #263640; border-radius:9px; }
+    input::placeholder { color:#62707b; }
+    button { cursor:pointer; padding:0 20px; color:#10171a; font-weight:800; border-radius:9px; background:var(--gold); transition:.2s; }
+    button:hover { background:var(--gold2); transform:translateY(-1px); }
+    .hidden { display:none!important; }
+    .layout { margin-top:26px; display:grid; grid-template-columns:minmax(0,1.6fr) minmax(280px,.8fr); gap:20px; align-items:start; }
+    .screen { background:#020609; border:1px solid #23313a; border-radius:16px; overflow:hidden; box-shadow:0 25px 70px #0008; }
+    video { display:block; width:100%; aspect-ratio:16/9; background:#020405; }
+    .now { padding:17px 19px; display:flex; justify-content:space-between; align-items:center; gap:12px; border-top:1px solid #1e2a32; }
+    .now strong { display:block; font-size:14px; } .now small { color:var(--muted); font:11px 'DM Mono',monospace; }
+    .open-link { color:var(--gold); text-decoration:none; font-size:12px; white-space:nowrap; }
+    .results { min-height:300px; padding:19px; background:rgba(17,27,35,.82); border:1px solid var(--line); border-radius:16px; }
+    .results-head { display:flex; justify-content:space-between; align-items:baseline; border-bottom:1px solid var(--line); padding-bottom:14px; margin-bottom:5px; }
+    .results-head h2 { margin:0; font-size:16px; letter-spacing:-.03em; } .count { color:var(--gold); font:12px 'DM Mono',monospace; }
+    .stream { display:flex; align-items:center; gap:11px; padding:14px 4px; border-bottom:1px solid #1e2a32; }
+    .stream:last-child { border:0; } .stream-main { min-width:0; flex:1; } .stream-title { font-size:12px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .stream-meta { margin-top:4px; color:var(--muted); font:10px 'DM Mono',monospace; }
+    .play { width:31px; height:31px; padding:0; border-radius:50%; flex:none; display:grid; place-items:center; font-size:11px; }
+    .quality { color:#93a5af; font:10px 'DM Mono',monospace; padding:5px 7px; border:1px solid #33444d; border-radius:5px; }
+    .empty { color:var(--muted); text-align:center; padding:64px 15px; line-height:1.7; font-size:13px; }
+    .empty b { color:var(--ink); display:block; margin-bottom:5px; }
+    .error { color:var(--red); }
+    @media (max-width:800px) { header,main{padding-left:18px;padding-right:18px}.control{grid-template-columns:1fr 1fr}.control input:first-child{grid-column:1/-1}.control button{min-height:48px}.layout{grid-template-columns:1fr} h1{font-size:48px} }
+    @media (max-width:460px) { .control{grid-template-columns:1fr}.control input:first-child{grid-column:auto} }
+  </style>
+</head>
+<body>
+  <header><div class="brand"><span class="mark">▶</span><span>NUVIO / FR</span></div><div class="status"><i></i><span id="providerStatus">connexion aux providers</span></div></header>
+  <main>
+    <div class="eyebrow">lecteur expérimental · sources françaises</div>
+    <h1>Le bon stream,<br><em>au premier regard.</em></h1>
+    <p class="intro">Entre un identifiant TMDB, choisis le format puis laisse les providers trouver une source lisible. Tout est regroupé dans une seule console.</p>
+    <form class="control" id="searchForm">
+      <input id="tmdbId" placeholder="Identifiant TMDB — ex. 550" required pattern="[A-Za-z0-9_\-]+">
+      <select id="mediaType"><option value="movie">Film</option><option value="tv">Série</option></select>
+      <input id="season" class="hidden" type="number" min="1" placeholder="Saison">
+      <input id="episode" class="hidden" type="number" min="1" placeholder="Épisode">
+      <select id="provider"><option value="all">Tous les providers</option></select>
+      <button type="submit">Chercher&nbsp; ↗</button>
+    </form>
+    <section class="layout">
+      <div class="screen"><video id="video" controls playsinline></video><div class="now"><div><strong id="nowTitle">Aucune source sélectionnée</strong><small id="nowMeta">Les résultats apparaîtront ici</small></div><a id="openLink" class="open-link hidden" target="_blank" rel="noopener">ouvrir ↗</a></div></div>
+      <div class="results"><div class="results-head"><h2>Sources disponibles</h2><span id="count" class="count">—</span></div><div id="streams"><div class="empty"><b>Prêt pour une recherche</b>Les liens des providers s'afficheront dans cette colonne.</div></div></div>
+    </section>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    const media = $('mediaType');
+    function toggleEpisodes() { const tv = media.value === 'tv'; $('season').classList.toggle('hidden', !tv); $('episode').classList.toggle('hidden', !tv); $('season').required = tv; $('episode').required = tv; }
+    media.addEventListener('change', toggleEpisodes); toggleEpisodes();
+    fetch('/api/providers').then(r => r.json()).then(data => { $('providerStatus').textContent = `${data.count} providers actifs`; data.providers.forEach(p => $('provider').insertAdjacentHTML('beforeend', `<option value="${p.id}">${p.name}</option>`)); }).catch(() => $('providerStatus').textContent = 'API indisponible');
+    $('searchForm').addEventListener('submit', async event => {
+      event.preventDefault(); const box = $('streams'); box.innerHTML = '<div class="empty">Recherche des sources en cours…</div>'; $('count').textContent = '…';
+      const params = new URLSearchParams({ tmdbId:$('tmdbId').value.trim(), mediaType:media.value, provider:$('provider').value });
+      if (media.value === 'tv') { params.set('season',$('season').value); params.set('episode',$('episode').value); }
+      try { const response = await fetch(`/api/streams?${params}`); const data = await response.json(); if (!response.ok) throw new Error(data.error); render(data); } catch (error) { box.innerHTML = `<div class="empty error"><b>La recherche a échoué</b>${error.message}</div>`; $('count').textContent = 'erreur'; }
+    });
+    function render(data) { $('count').textContent = `${data.total} lien${data.total > 1 ? 's' : ''}`; if (!data.streams.length) { $('streams').innerHTML = '<div class="empty"><b>Aucune source trouvée</b>Les providers peuvent être temporairement indisponibles.</div>'; return; } $('streams').innerHTML = data.streams.map((s,i) => `<div class="stream"><div class="stream-main"><div class="stream-title">${escapeHtml(s.title)}</div><div class="stream-meta">${escapeHtml(s.providerName)} · ${s.language || 'FR'} · ${s.type || 'direct'}</div></div>${s.quality ? `<span class="quality">${escapeHtml(s.quality)}</span>` : ''}<button class="play" data-index="${i}" aria-label="Lire">▶</button></div>`).join(''); document.querySelectorAll('.play').forEach(button => button.addEventListener('click', () => play(data.streams[button.dataset.index]))); }
+    let hls;
+    function play(stream) {
+      const video = $('video');
+      if (hls) { hls.destroy(); hls = null; }
+      video.pause(); video.removeAttribute('src'); video.load();
+      video.onerror = () => { $('nowMeta').textContent = 'Lecture bloquée par la source — utilise « ouvrir ↗ »'; $('nowMeta').classList.add('error'); };
+      $('nowMeta').classList.remove('error');
+      const proxyParams = new URLSearchParams({ url: stream.url, headers: JSON.stringify(stream.headers || {}) });
+      const playbackUrl = `/api/proxy?${proxyParams}`;
+      const isHls = /\.m3u8(?:$|\?)/i.test(stream.url) || stream.type === 'hls';
+      if (isHls && window.Hls && Hls.isSupported()) {
+        hls = new Hls({ enableWorker:true, xhrSetup: (xhr) => { Object.entries(stream.headers || {}).forEach(([key,value]) => { try { xhr.setRequestHeader(key,value); } catch (_) {} }); } });
+        hls.loadSource(playbackUrl); hls.attachMedia(video); hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+        hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) { $('nowMeta').textContent = 'Source HLS indisponible — ouvre le lien directement'; $('nowMeta').classList.add('error'); } });
+      } else {
+        video.src = playbackUrl;
+        video.play().catch(() => {});
+      }
+      $('nowTitle').textContent = stream.title; $('nowMeta').textContent = `${stream.providerName} · ${stream.quality || 'qualité auto'}`; $('openLink').href = stream.url; $('openLink').classList.remove('hidden');
+    }
+    function escapeHtml(value) { return String(value || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+  </script>
+</body>
+</html>

@@ -138,3 +138,25 @@ This project is distributed under the **GPL-3.0** license. See the [LICENSE](LIC
 
 ---
 *Maintained by Gowaru.*
+
+## API Node.js
+
+Le serveur expose les providers compilés comme une API JSON en français :
+
+```text
+GET /api/health
+GET /api/providers
+GET /api/streams?tmdbId=550&mediaType=movie&provider=all
+GET /api/streams?tmdbId=1399&mediaType=tv&season=1&episode=1&provider=anime-sama
+GET /api/streams/anime-sama?tmdbId=550&mediaType=movie
+```
+
+`provider=all` interroge les 20 providers actifs en parallèle. Chaque résultat indique le statut du provider, afin qu’une source indisponible ne bloque pas les autres. Le délai par provider est configurable avec `API_PROVIDER_TIMEOUT_MS` (55 secondes par défaut).
+
+Lancer l’API :
+
+```bash
+npm install
+npm run test:api
+npm run serve
+```

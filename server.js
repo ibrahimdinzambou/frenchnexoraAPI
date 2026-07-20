@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { handleApiRequest, handleProxyRequest } = require('./api');
 
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
@@ -48,7 +49,27 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    let filePath = path.join(__dirname, req.url === '/' ? 'index.html' : req.url);
+    const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    if (requestUrl.pathname.startsWith('/api/')) {
+        handleProxyRequest(req, res, requestUrl).then((proxied) => {
+            if (proxied) return true;
+            return handleApiRequest(req, res, requestUrl);
+        }).then((handled) => {
+            if (handled === false && !res.writableEnded) {
+                res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+                res.end(JSON.stringify({ error: 'Route API introuvable.' }));
+            }
+        }).catch((error) => {
+            console.error('[api]', error);
+            if (!res.writableEnded) {
+                res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+                res.end(JSON.stringify({ error: 'Erreur interne du serveur.' }));
+            }
+        });
+        return;
+    }
+
+    let filePath = path.join(__dirname, requestUrl.pathname === '/' ? 'index.html' : requestUrl.pathname);
 
     if (!filePath.startsWith(__dirname)) {
         res.setHeader('Content-Type', 'text/plain');
@@ -65,7 +86,7 @@ const server = http.createServer((req, res) => {
         if (err) {
             res.setHeader('Content-Type', 'text/plain');
             if (err.code === 'ENOENT') {
-                if (req.url === '/') {
+                if (requestUrl.pathname === '/') {
                     res.writeHead(200);
                     res.end('Nuvio Providers Server Running. Access /manifest.json to see the manifest.');
                 } else {
