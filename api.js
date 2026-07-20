@@ -162,6 +162,24 @@ function normalizeStream(stream, provider) {
     };
 }
 
+function hosterFromStream(stream) {
+    const url = stream.url;
+    const isHls = stream.type === 'hls' || /\.m3u8(?:[?#]|$)/i.test(url);
+    return {
+        provider: stream.provider,
+        name: stream.providerName,
+        nom: stream.providerName,
+        title: stream.title,
+        quality: stream.quality,
+        language: stream.language,
+        lang: stream.language,
+        type: isHls ? 'hls' : (stream.type || 'direct'),
+        headers: stream.headers,
+        ...(isHls ? { m3u8: url } : { directUrl: url }),
+        videoUrl: url,
+    };
+}
+
 function validateQuery(url) {
     const tmdbId = url.searchParams.get('tmdbId');
     const mediaType = url.searchParams.get('mediaType') || 'movie';
@@ -234,7 +252,7 @@ async function handleApiRequest(req, res, url) {
 
         const requested = providerMatch ? providerMatch[1] : (url.searchParams.get('provider') || 'all');
         const selected = requested === 'all'
-            ? [...providers.values()]
+            ? [...providers.values()].filter(candidate => candidate.supportedTypes?.includes(mediaType))
             : [providers.get(requested)].filter(Boolean);
 
         if (!selected.length) return json(res, 404, { error: `Provider inconnu: ${requested}` });
@@ -247,6 +265,7 @@ async function handleApiRequest(req, res, url) {
             provider: requested,
             total: streams.length,
             streams,
+            hosters: streams.map(hosterFromStream),
             providers: results.map(result => ({
                 id: result.provider.id,
                 name: result.provider.name,
