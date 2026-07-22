@@ -252,7 +252,7 @@ async function handleApiRequest(req, res, url) {
 
         const requested = providerMatch ? providerMatch[1] : (url.searchParams.get('provider') || 'all');
         const selected = requested === 'all'
-            ? [...providers.values()].filter(candidate => candidate.supportedTypes?.includes(mediaType))
+            ? [...providers.values()].filter(candidate => candidate.supportedTypes?.includes(query.mediaType))
             : [providers.get(requested)].filter(Boolean);
 
         if (!selected.length) return json(res, 404, { error: `Provider inconnu: ${requested}` });
